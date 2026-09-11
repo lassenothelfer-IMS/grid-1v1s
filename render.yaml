@@ -1,0 +1,16 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# One Node web service. server.js serves the game files and the WebSocket on
+# the same port, which Render hands in through $PORT, so nothing else is needed.
+# The Node version comes from "engines" in package.json (22.x).
+
+services:
+  - type: web
+    name: grid1v1
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeployTrigger: commit
