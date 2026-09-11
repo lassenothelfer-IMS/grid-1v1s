@@ -1,0 +1,20 @@
+{
+  "name": "grid1v1",
+  "version": "0.1.0",
+  "description": "Grid 1v1 - two players, one grid, bombs with short fuses.",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node test/engine.test.mjs",
+    "test:online": "node test/online.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

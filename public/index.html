@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Grid 1v1</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <h1>Grid<span>1v1</span></h1>
+        <p class="room" id="room-label" hidden></p>
+      </header>
+
+      <section class="hud" id="hud" hidden>
+        <div class="hud-side" data-player="0">
+          <span class="tag">Spieler 1</span>
+          <span class="cls" id="class-0"></span>
+          <span class="lives" id="lives-0"></span>
+        </div>
+        <div class="hud-clock" id="clock">0:00</div>
+        <div class="hud-side right" data-player="1">
+          <span class="tag">Spieler 2</span>
+          <span class="cls" id="class-1"></span>
+          <span class="lives" id="lives-1"></span>
+        </div>
+      </section>
+
+      <div class="board-wrap">
+        <canvas id="board" width="320" height="640"></canvas>
+
+        <div class="overlay" id="overlay">
+          <div class="panel" id="panel"></div>
+        </div>
+      </div>
+
+      <footer class="legend" id="legend"></footer>
+    </main>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
