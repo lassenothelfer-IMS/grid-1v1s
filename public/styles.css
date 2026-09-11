@@ -738,3 +738,172 @@ input[type="text"]:focus { outline: none; border-color: var(--ember-a45); }
   .feed { display: none; }
   .loadout { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ==== phones and tablets ====================================================
+   `.touch` is set on touch devices. In a match the keyboard chrome (footer,
+   key list) gives way to on-screen controls: one strip for you, or — local
+   play, "table mode" — one strip on each edge, player 1's rotated to face them. */
+
+html { touch-action: manipulation; } /* no double-tap zoom */
+.touch-host { display: none; }
+
+.app.touch {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.app.touch input[type="text"] { -webkit-user-select: text; user-select: text; }
+.app.touch .bottombar,
+.app.touch .codex,
+.app.touch .epitaph,
+.app.touch .topbar > .kicker,
+.app.touch #round-label { display: none; }
+.app.touch .topbar { padding: 0 14px; gap: 12px; }
+.app.touch .wordmark { font-size: 18px; letter-spacing: 0.16em; }
+.app.touch .overlay { top: calc(48px + env(safe-area-inset-top)); }
+.app.touch.in-match .touch-near,
+.app.touch.table.in-match .touch-far { display: block; }
+.app.touch .touch-host,
+.app.touch #board { touch-action: none; }
+
+/* A control strip: D-pad at one end, status and buttons at the other. */
+.touch-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+}
+.touch-strip.rotated { transform: rotate(180deg); }
+
+.dpad {
+  position: relative;
+  flex: none;
+  width: 136px;
+  height: 136px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: radial-gradient(circle, rgba(230, 222, 210, 0.07), rgba(230, 222, 210, 0.02) 70%);
+  touch-action: none;
+}
+.dpad-arrow {
+  position: absolute;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 15px;
+  color: var(--bone-soft);
+  pointer-events: none;
+  transition: background 0.08s, color 0.08s, box-shadow 0.08s;
+}
+.dpad-arrow.up { top: 4px; left: 50%; transform: translateX(-50%); }
+.dpad-arrow.down { bottom: 4px; left: 50%; transform: translateX(-50%); }
+.dpad-arrow.left { left: 4px; top: 50%; transform: translateY(-50%); }
+.dpad-arrow.right { right: 4px; top: 50%; transform: translateY(-50%); }
+.dpad-hub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  pointer-events: none;
+}
+.touch-strip[data-player="0"] .dpad-arrow.on { background: rgba(232, 163, 61, 0.3); color: var(--ember-hi); box-shadow: 0 0 16px rgba(232, 163, 61, 0.45); }
+.touch-strip[data-player="1"] .dpad-arrow.on { background: rgba(192, 168, 255, 0.28); color: var(--violet); box-shadow: 0 0 16px rgba(192, 168, 255, 0.45); }
+.touch-strip[data-player="0"] .dpad { border-color: rgba(232, 163, 61, 0.3); }
+.touch-strip[data-player="1"] .dpad { border-color: rgba(192, 168, 255, 0.28); }
+
+.touch-side { display: flex; align-items: center; gap: 14px; }
+.touch-hud { display: flex; flex-direction: column; gap: 5px; min-width: 64px; }
+.touch-name { font-family: var(--display); font-size: 17px; font-weight: 600; line-height: 1; }
+.touch-strip[data-player="0"] .touch-name { color: var(--ember-hi); }
+.touch-strip[data-player="1"] .touch-name { color: var(--violet); }
+.touch-lives { display: flex; gap: 3px; }
+.touch-lives .seg { width: 9px; height: 4px; background: rgba(230, 222, 210, 0.12); }
+.touch-strip[data-player="0"] .seg.on { background: var(--ember); box-shadow: 0 0 6px rgba(232, 163, 61, 0.6); }
+.touch-strip[data-player="1"] .seg.on { background: var(--violet); box-shadow: 0 0 6px rgba(192, 168, 255, 0.55); }
+.touch-streak { min-height: 12px; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--bone-soft); }
+
+.touch-buttons { display: flex; align-items: center; gap: 12px; }
+.touch-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  letter-spacing: 0;
+  text-transform: none;
+  touch-action: none;
+}
+.touch-btn .glyph { line-height: 1; }
+.touch-btn .count { position: absolute; bottom: 7px; left: 0; right: 0; font-size: 9px; color: var(--bone); }
+.touch-btn.bomb { width: 80px; height: 80px; font-size: 26px; }
+.touch-btn.fatal { width: 56px; height: 56px; font-size: 20px; }
+.touch-btn.fatal .count { bottom: 4px; font-size: 8px; }
+.touch-strip[data-player="0"] .touch-btn.bomb { border: 1px solid rgba(232, 163, 61, 0.55); background: rgba(232, 163, 61, 0.12); color: var(--ember-hi); }
+.touch-strip[data-player="1"] .touch-btn.bomb { border: 1px solid rgba(192, 168, 255, 0.5); background: rgba(192, 168, 255, 0.1); color: var(--violet); }
+.touch-btn.bomb.empty { opacity: 0.45; }
+.touch-btn.fatal.locked { border: 1px solid rgba(230, 222, 210, 0.1); color: rgba(230, 222, 210, 0.3); background: repeating-linear-gradient(135deg, rgba(230, 222, 210, 0.04) 0 4px, transparent 4px 8px); }
+.touch-strip[data-player="0"] .touch-btn.fatal.far { border: 1px solid rgba(232, 163, 61, 0.5); color: var(--ember-hi); background: transparent; }
+.touch-strip[data-player="1"] .touch-btn.fatal.far { border: 1px solid rgba(192, 168, 255, 0.45); color: var(--violet); background: transparent; }
+.touch-strip[data-player="0"] .touch-btn.fatal.ready { border: 1px solid var(--ember-hi); color: #fff1dc; background: rgba(232, 163, 61, 0.35); box-shadow: 0 0 22px rgba(232, 163, 61, 0.6); }
+.touch-strip[data-player="1"] .touch-btn.fatal.ready { border: 1px solid var(--violet); color: #f4efff; background: rgba(192, 168, 255, 0.3); box-shadow: 0 0 22px rgba(192, 168, 255, 0.55); }
+.touch-btn.fatal.ready { animation: fatalReady 0.9s ease-in-out infinite; }
+.touch-btn.hit { animation: tapPop 0.18s ease-out; }
+@keyframes tapPop { 40% { transform: scale(0.9); } }
+
+/* Portrait — phones and upright iPads: controls under the board (and above it in table mode). */
+@media (orientation: portrait) {
+  .app.touch {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: 48px auto minmax(0, 1fr) auto;
+    grid-template-areas: "top top" "left right" "arena arena" "near near";
+  }
+  .app.touch.table { grid-template-areas: "top top" "far far" "arena arena" "near near"; }
+  .app.touch.table .side { display: none; }
+  .app.touch .touch-far { grid-area: far; }
+  .app.touch .touch-near { grid-area: near; }
+  .app.touch .arena { padding: 6px 8px; }
+  .app.touch .board-wrap {
+    height: min(100%, calc((100vw - 16px) * 4 / 3));
+    box-shadow: 0 0 0 4px rgba(12, 10, 17, 0.8), 0 20px 50px rgba(0, 0, 0, 0.6);
+  }
+}
+
+/* Landscape — iPads on their side and phones held sideways: board in the
+   middle, controls in the corners beside it. */
+@media (orientation: landscape) {
+  .app.touch {
+    grid-template-columns: minmax(0, 1fr) calc((100dvh - 48px - 20px) * 0.75) minmax(0, 1fr);
+    grid-template-rows: 48px minmax(0, 1fr);
+    grid-template-areas: "top top top" "left arena right";
+  }
+  .app.touch .arena { padding: 10px 0; }
+  .app.touch.table .side { display: none; }
+  .app.touch .touch-host { position: absolute; left: 0; right: 0; z-index: 6; pointer-events: none; }
+  .app.touch .touch-far { top: calc(48px + env(safe-area-inset-top)); }
+  .app.touch .touch-near { bottom: env(safe-area-inset-bottom); }
+  .app.touch .touch-strip > * { pointer-events: auto; }
+  .app.touch .side-left { padding: 12px 8px 0 16px; }
+  .app.touch .side-right { padding: 12px 16px 0 8px; }
+}
+
+/* Narrow phones: everything in a strip has to fit in ~350px. */
+@media (max-width: 430px) {
+  .touch-strip { padding: 8px 10px; gap: 8px; }
+  .dpad { width: 118px; height: 118px; }
+  .dpad-arrow { width: 40px; height: 40px; font-size: 13px; }
+  .touch-side { gap: 9px; }
+  .touch-hud { min-width: 0; }
+  .touch-name { font-size: 15px; }
+  .touch-buttons { gap: 9px; }
+  .touch-btn.bomb { width: 70px; height: 70px; font-size: 23px; }
+  .touch-btn.fatal { width: 48px; height: 48px; font-size: 17px; }
+}

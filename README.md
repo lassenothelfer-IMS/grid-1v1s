@@ -132,6 +132,26 @@ der Gegner gerade gefallen, passiert beim Drücken nichts.
 
 Die Oberfläche des Spiels ist komplett auf Englisch.
 
+## Handy und iPad
+
+Auf Touch-Geräten erscheinen im Match eigene Bedienelemente; eine Tastatur funktioniert
+trotzdem weiter.
+
+- **D-Pad** für den linken Daumen: Tippen = ein Feld, Halten = weiterlaufen, mit dem
+  Daumen auf einen anderen Pfeil gleiten = abbiegen — genau wie auf der Tastatur.
+- **Bombe** (◉, mit Anzeige der freien Bomben) und **Fatality** (✠, gesperrt bis zur
+  4er-Serie, pulsiert, sobald sie möglich ist) für den rechten Daumen. Mehrere Finger
+  gleichzeitig gehen, also laufen und Bombe legen zugleich.
+- **Online** bekommt man eine Leiste für sich selbst unten am Rand.
+- **Lokal: Tischmodus.** Das iPad (oder Handy) liegt flach zwischen zwei Leuten; jeder
+  hat seine Leiste an seiner Kante, die von Spieler 1 um 180° gedreht, damit sie zu ihm
+  schaut. Hochkant liegen die Leisten über und unter dem Feld, quer in den Ecken daneben.
+- **Als App:** Im Browser „Zum Home-Bildschirm“ wählen — dann startet das Spiel im
+  Vollbild ohne Browserleisten, mit eigenem Icon.
+- Während eines Matches geht der Bildschirm nicht aus (wo der Browser es erlaubt), und
+  Zoomen per Doppeltipp oder zwei Fingern ist gesperrt.
+- Zum Testen am Computer: `?touch` an die Adresse hängen erzwingt die Touch-Oberfläche.
+
 ## Starten
 
 ```bash
@@ -173,6 +193,8 @@ grid1v1/
 │   ├── main.js        # Menü, Klassenwahl, Render-Loop, lokal + online
 │   ├── render.js      # Canvas-Zeichnung inkl. Bewegungsglättung
 │   ├── input.js       # Tastatur: Druck und gehaltene Richtung, getrennt gemeldet
+│   ├── touch.js       # Touch-Steuerung: D-Pad, Bombe, Fatality, Tischmodus
+│   ├── manifest.webmanifest, icons/  # „Zum Home-Bildschirm" als App
 │   └── net.js         # WebSocket-Wrapper
 ├── server.js          # Statische Dateien + Räume + autoritative Simulation
 └── test/              # Regel- und Netzwerktests

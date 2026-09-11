@@ -26,6 +26,7 @@ import {
 import { draw, fitCanvas, resetMotion } from "/render.js";
 import { createInput, LOCAL_SCHEMES, ONLINE_SCHEMES } from "/input.js";
 import { connect } from "/net.js";
+import { isTouchDevice, createTouchPad } from "/touch.js";
 
 const app = document.getElementById("app");
 const canvas = document.getElementById("board");
@@ -51,6 +52,15 @@ const streakName = document.getElementById("streak-name");
 const streakCount = document.getElementById("streak-count");
 const streakNote = document.getElementById("streak-note");
 const promptEl = document.getElementById("prompt");
+const touchHosts = [document.getElementById("touch-0"), document.getElementById("touch-1")];
+
+// Phones and tablets get on-screen controls; the keyboard keeps working anyway.
+const touchMode = isTouchDevice();
+app.classList.toggle("touch", touchMode);
+if (touchMode) {
+  // Safari ignores maximum-scale; this is what actually stops pinch-zoom mid-fight.
+  document.addEventListener("gesturestart", (event) => event.preventDefault());
+}
 
 const session = {
   mode: null,      // null | "local" | "online"
@@ -63,6 +73,7 @@ const session = {
   code: null,
   overShown: false,
   overAt: 0,      // when the match ended, so a fatality can play out first
+  pads: [],       // on-screen control strips: { player, pad }
 };
 
 const PLAYER_NAMES = ["Player 1", "Player 2"];
@@ -74,6 +85,7 @@ const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII"];
 // The fatality key as a player would read it, per controlled slot.
 const FATALITY_KEYS_LOCAL = ["X", "Right Shift"];
 const FATALITY_KEY_ONLINE = "X";
+const PRESS = touchMode ? "tap" : "press"; // how the fatality is triggered, in prompts
 const FATALITY_SHOW_MS = 2600; // the fatality plays out before the result card
 
 // --- small DOM helpers ------------------------------------------------------
@@ -126,6 +138,8 @@ function classTags(stats) {
 function leaveSession() {
   session.input?.destroy();
   session.input = null;
+  unmountPads();
+  keepAwake(false);
   session.socket?.close();
   session.socket = null;
   session.mode = null;
@@ -312,12 +326,19 @@ function startLocal(classes, mode) {
   session.classes = chosen;
   session.gameMode = gameMode;
   session.state = createGame({ classes: chosen, mode: gameMode });
-  session.input = createInput(LOCAL_SCHEMES, {
+  const handlers = {
     onMove: (slot, dir) => requestMove(session.state, slot, dir),
     onHold: (slot, dir) => setHeld(session.state, slot, dir),
     onBomb: (slot) => requestBomb(session.state, slot),
     onFatality: (slot) => requestFatality(session.state, slot),
-  });
+  };
+  session.input = createInput(LOCAL_SCHEMES, handlers);
+  // Table mode: each player's controls on their own edge, player 1's facing them.
+  if (touchMode) {
+    app.classList.add("table");
+    mountPad(0, touchHosts[0], true, handlers);
+    mountPad(1, touchHosts[1], false, handlers);
+  }
   enterMatch(MODES[gameMode].name + " · Local duel", [["Local"], ["1 device"]]);
   setLegend([
     { player: 0, key: "W A S D", what: "Move" },
@@ -384,12 +405,17 @@ function handleServerMessage(message) {
       lastSeen = null;
       lastStreaks = [0, 0];
       session.input?.destroy();
-      session.input = createInput(ONLINE_SCHEMES, {
-        onMove: (_slot, dir) => session.socket?.send({ type: "move", dir }),
-        onHold: (_slot, dir) => session.socket?.send({ type: "hold", dir }),
-        onBomb: () => session.socket?.send({ type: "bomb" }),
-        onFatality: () => session.socket?.send({ type: "fatality" }),
-      });
+      unmountPads();
+      {
+        const handlers = {
+          onMove: (_slot, dir) => session.socket?.send({ type: "move", dir }),
+          onHold: (_slot, dir) => session.socket?.send({ type: "hold", dir }),
+          onBomb: () => session.socket?.send({ type: "bomb" }),
+          onFatality: () => session.socket?.send({ type: "fatality" }),
+        };
+        session.input = createInput(ONLINE_SCHEMES, handlers);
+        if (touchMode) mountPad(session.slot, touchHosts[1], false, handlers);
+      }
       enterMatch(MODES[session.gameMode].name + " · Online duel", [["Online"], ["Room " + (session.code || "")]]);
       setLegend([
         { player: session.slot, key: "WASD / Arrows", what: "Move" },
@@ -417,6 +443,7 @@ function handleServerMessage(message) {
 
 function enterMatch(mode, statusParts) {
   app.classList.add("in-match");
+  keepAwake(true);
   modeLabel.textContent = mode;
   hidePanel();
   statusEl.replaceChildren(
@@ -764,7 +791,8 @@ let lastStreaks = [0, 0];
 
 // Is this slot played from this screen? (Both are, in local play.)
 const controls = (index) => session.mode !== "online" || index === session.slot;
-const fatalityKeyOf = (index) => (session.mode === "online" ? FATALITY_KEY_ONLINE : FATALITY_KEYS_LOCAL[index]);
+const fatalityKeyOf = (index) =>
+  touchMode ? "✠" : session.mode === "online" ? FATALITY_KEY_ONLINE : FATALITY_KEYS_LOCAL[index];
 
 // The quick banner when a streak reaches 2, 3, 4…
 function flashStreak(index, streak) {
@@ -774,9 +802,9 @@ function flashStreak(index, streak) {
   streakCount.textContent = streak + " kill streak";
   streakNote.textContent =
     streak >= FATALITY_ANYWHERE_STREAK
-      ? (mine ? "Fatality — press " + key + ", from anywhere" : "They can finish you from anywhere")
+      ? (mine ? "Fatality — " + PRESS + " " + key + ", from anywhere" : "They can finish you from anywhere")
       : streak >= FATALITY_STREAK
-        ? (mine ? "Fatality unlocked — get within " + FATALITY_RANGE + " squares, press " + key
+        ? (mine ? "Fatality unlocked — get within " + FATALITY_RANGE + " squares, " + PRESS + " " + key
           : "Fatality unlocked — keep your distance")
         : "";
   streakEl.setAttribute("data-player", String(index));
@@ -817,7 +845,7 @@ function promptFor(state) {
     const ready = offer !== "far";
     const frozen = state.phase === "roundEnd";
     const text = controls(player.index)
-      ? (ready ? name + " · Press " + key + " — Fatality"
+      ? (ready ? name + " · " + (touchMode ? "Tap " : "Press ") + key + " — Fatality"
         : name + " · Fatality ready — get within " + FATALITY_RANGE + " squares")
       : (ready ? name + (frozen ? " can still finish you" : " can finish you — get away!")
         : name + " has a fatality — keep your distance");
@@ -838,8 +866,45 @@ function updateHud(state) {
     renderShields(shieldEls[i], player);
   });
   renderAbilities(state);
+  for (const { player, pad } of session.pads) {
+    pad.update(state, { maxBombs: statsOf(state.players[player].className).maxBombs });
+  }
   updateFeed(state);
 }
+
+// --- touch controls and keeping the screen on ----------------------------------
+
+function mountPad(player, host, rotated, handlers) {
+  session.pads.push({ player, pad: createTouchPad(host, { player, rotated, handlers }) });
+}
+
+function unmountPads() {
+  for (const { pad } of session.pads) pad.destroy();
+  session.pads = [];
+  app.classList.remove("table");
+}
+
+// A phone that dims mid-match is a lost round. Where the browser allows it,
+// hold the screen on while a match is running.
+let wakeLock = null;
+async function keepAwake(on) {
+  if (!touchMode || !("wakeLock" in navigator)) return;
+  try {
+    if (on && !wakeLock && document.visibilityState === "visible") {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } else if (!on && wakeLock) {
+      await wakeLock.release();
+      wakeLock = null;
+    }
+  } catch {
+    wakeLock = null;
+  }
+}
+// The lock drops whenever the page is hidden; take it back on return.
+document.addEventListener("visibilitychange", () => {
+  if (session.state && session.state.status === "playing") keepAwake(true);
+});
 
 // --- loop -------------------------------------------------------------------
 
