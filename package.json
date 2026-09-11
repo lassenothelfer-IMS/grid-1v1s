@@ -12,7 +12,7 @@
     "test:online": "node test/online.test.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": "22.x"
   },
   "dependencies": {
     "ws": "^8.18.0"
