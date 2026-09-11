@@ -7,8 +7,8 @@ import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 
-import { createGame, step, requestMove, requestBomb } from "./shared/engine.js";
-import { TICK_MS, SNAPSHOT_MS, CLASSES, DEFAULT_CLASS } from "./shared/constants.js";
+import { createGame, step, requestMove, setHeld, requestBomb, requestFatality } from "./shared/engine.js";
+import { TICK_MS, SNAPSHOT_MS, CLASSES, DEFAULT_CLASS, MODES, DEFAULT_MODE } from "./shared/constants.js";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(ROOT, "public");
@@ -71,6 +71,10 @@ function safeClass(value) {
   return CLASSES[value] ? value : DEFAULT_CLASS;
 }
 
+function safeMode(value) {
+  return MODES[value] ? value : DEFAULT_MODE;
+}
+
 function makeCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no look-alikes
   let code;
@@ -93,6 +97,7 @@ function createRoom() {
     code: makeCode(),
     sockets: [null, null],
     classes: [DEFAULT_CLASS, DEFAULT_CLASS],
+    mode: DEFAULT_MODE,  // chosen by the host; the guest plays the host's mode
     game: null,
     loop: null,
     lastTick: 0,
@@ -102,21 +107,31 @@ function createRoom() {
   return room;
 }
 
+// Timers are late under load. Rather than dropping the lost time (the match
+// would slide into slow motion) or taking one huge step (fuses, fire and grace
+// timers would skip past each other), catch up in exact TICK_MS steps. Only a
+// genuine freeze longer than this is given up on.
+const MAX_CATCH_UP_MS = 250;
+
 function startMatch(room) {
-  room.game = createGame({ classes: room.classes });
+  room.game = createGame({ classes: room.classes, mode: room.mode });
   room.lastTick = Date.now();
+  room.backlog = 0;
   room.sinceSnapshot = 0;
-  broadcast(room, { type: "start", classes: room.classes });
+  broadcast(room, { type: "start", classes: room.classes, mode: room.mode });
 
   if (room.loop) clearInterval(room.loop);
   room.loop = setInterval(() => {
     const now = Date.now();
-    const dt = Math.min(now - room.lastTick, 100); // don't fast-forward after a stall
+    room.backlog += Math.min(now - room.lastTick, MAX_CATCH_UP_MS);
     room.lastTick = now;
 
-    step(room.game, dt);
+    while (room.backlog >= TICK_MS && room.game.status !== "over") {
+      step(room.game, TICK_MS);
+      room.backlog -= TICK_MS;
+      room.sinceSnapshot += TICK_MS;
+    }
 
-    room.sinceSnapshot += dt;
     if (room.sinceSnapshot >= SNAPSHOT_MS || room.game.status === "over") {
       room.sinceSnapshot = 0;
       broadcast(room, { type: "state", state: room.game });
@@ -157,7 +172,8 @@ wss.on("connection", (socket) => {
       slot = 0;
       room.sockets[0] = socket;
       room.classes[0] = safeClass(msg.className);
-      send(socket, { type: "joined", code: room.code, slot });
+      room.mode = safeMode(msg.mode);
+      send(socket, { type: "joined", code: room.code, slot, mode: room.mode });
       send(socket, { type: "waiting" });
       return;
     }
@@ -165,18 +181,18 @@ wss.on("connection", (socket) => {
     if (msg.type === "join" && !room) {
       const found = rooms.get(String(msg.code || "").toUpperCase().trim());
       if (!found) {
-        send(socket, { type: "error", message: "Kein Raum mit diesem Code." });
+        send(socket, { type: "error", message: "No room with that code." });
         return;
       }
       if (found.sockets[1]) {
-        send(socket, { type: "error", message: "Dieser Raum ist voll." });
+        send(socket, { type: "error", message: "That room is full." });
         return;
       }
       room = found;
       slot = 1;
       room.sockets[1] = socket;
       room.classes[1] = safeClass(msg.className);
-      send(socket, { type: "joined", code: room.code, slot });
+      send(socket, { type: "joined", code: room.code, slot, mode: room.mode });
       startMatch(room);
       return;
     }
@@ -185,8 +201,12 @@ wss.on("connection", (socket) => {
 
     if (msg.type === "move") {
       requestMove(room.game, slot, msg.dir);
+    } else if (msg.type === "hold") {
+      setHeld(room.game, slot, msg.dir);
     } else if (msg.type === "bomb") {
       requestBomb(room.game, slot);
+    } else if (msg.type === "fatality") {
+      requestFatality(room.game, slot);
     } else if (msg.type === "rematch" && room.game.status === "over") {
       if (room.sockets[0] && room.sockets[1]) startMatch(room);
     }
@@ -195,10 +215,10 @@ wss.on("connection", (socket) => {
   socket.on("close", () => {
     if (!room) return;
     room.sockets[slot] = null;
-    if (rooms.has(room.code)) closeRoom(room, "Der andere Spieler hat den Raum verlassen.");
+    if (rooms.has(room.code)) closeRoom(room, "The other player left the room.");
   });
 });
 
 httpServer.listen(PORT, () => {
-  console.log(`> Grid 1v1 läuft auf http://localhost:${PORT}`);
+  console.log(`> Grid 1v1 running at http://localhost:${PORT}`);
 });

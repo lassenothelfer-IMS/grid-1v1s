@@ -1,43 +1,82 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Grid 1v1</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+    />
     <link rel="stylesheet" href="/styles.css" />
     <link rel="icon" href="data:," />
   </head>
   <body>
-    <main class="shell">
+    <div class="app" id="app">
+      <div class="ember-wash" aria-hidden="true"></div>
+
       <header class="topbar">
-        <h1>Grid<span>1v1</span></h1>
-        <p class="room" id="room-label" hidden></p>
+        <div class="wordmark">Grid 1v1</div>
+        <span class="rule-v" aria-hidden="true"></span>
+        <div class="kicker" id="mode-label">A duel on the grid</div>
+        <div class="topbar-end">
+          <div class="pips" id="pips" aria-hidden="true"></div>
+          <div class="kicker" id="round-label"></div>
+          <div class="kicker" id="room-label" hidden></div>
+          <div class="timer" id="clock">0:00</div>
+        </div>
       </header>
 
-      <section class="hud" id="hud" hidden>
-        <div class="hud-side" data-player="0">
-          <span class="tag">Spieler 1</span>
-          <span class="cls" id="class-0"></span>
-          <span class="lives" id="lives-0"></span>
-        </div>
-        <div class="hud-clock" id="clock">0:00</div>
-        <div class="hud-side right" data-player="1">
-          <span class="tag">Spieler 2</span>
-          <span class="cls" id="class-1"></span>
-          <span class="lives" id="lives-1"></span>
-        </div>
-      </section>
+      <aside class="side side-left">
+        <section class="pcard" id="card-0" data-player="0"></section>
+        <section class="relics">
+          <div class="kicker">Shields</div>
+          <div class="relic-row" id="shields-0"></div>
+        </section>
+        <p class="epitaph">“Your own fire forgives you once.”</p>
+      </aside>
 
-      <div class="board-wrap">
-        <canvas id="board" width="320" height="640"></canvas>
-
-        <div class="overlay" id="overlay">
-          <div class="panel" id="panel"></div>
+      <main class="arena">
+        <div class="board-wrap">
+          <canvas id="board" width="360" height="480"></canvas>
+          <div class="streak" id="streak" aria-live="polite" hidden>
+            <div class="streak-name" id="streak-name"></div>
+            <div class="streak-count" id="streak-count"></div>
+            <div class="streak-note" id="streak-note"></div>
+          </div>
+          <div class="prompt" id="prompt" aria-live="polite" hidden></div>
+          <div class="callout" id="callout" aria-live="assertive" hidden>
+            <div class="callout-kicker" id="callout-kicker"></div>
+            <div class="callout-main" id="callout-main"></div>
+          </div>
         </div>
+      </main>
+
+      <aside class="side side-right">
+        <section class="pcard" id="card-1" data-player="1"></section>
+        <section class="relics">
+          <div class="kicker">Shields</div>
+          <div class="relic-row" id="shields-1"></div>
+        </section>
+        <section class="codex">
+          <div class="kicker">Controls</div>
+          <div class="codex-list" id="legend"></div>
+        </section>
+      </aside>
+
+      <footer class="bottombar">
+        <div class="abilities" id="abilities"></div>
+        <span class="rule-v" aria-hidden="true"></span>
+        <div class="feed" id="feed"></div>
+        <div class="status" id="status"></div>
+      </footer>
+
+      <div class="overlay" id="overlay">
+        <div class="panel" id="panel"></div>
       </div>
-
-      <footer class="legend" id="legend"></footer>
-    </main>
+    </div>
 
     <script type="module" src="/main.js"></script>
   </body>
