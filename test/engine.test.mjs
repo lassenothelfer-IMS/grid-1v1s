@@ -494,16 +494,88 @@ requestFatality(g, 0);
 step(g, 16);
 check("X wins from the spawn", g.status === "over" && g.winner === 0 && g.finish.streak === 5);
 
-console.log("fatality — timing");
+console.log("fatality — the bomb beats your X by a split second");
+// The reported bug: a streak of 4, your bomb drops them a moment before your X
+// lands. The kill must not swallow the fatality.
 g = createGame({ mode: "siege" });
-for (let i = 0; i < FATALITY_ANYWHERE_STREAK - 1; i += 1) loseRound(g, 1);
-g.players[1].invulnIn = 0; g.players[1].selfShields = 0;
+for (let i = 0; i < FATALITY_STREAK; i += 1) loseRound(g, 1);
+g.players[0].x = 5; g.players[0].y = 10;
+g.players[1].x = 7; g.players[1].y = 12;
+g.players[1].selfShields = 0;
+g.bombs.push({ x: 7, y: 11, owner: 0, fuse: 16, radius: 1 }); // placed earlier, going off now
+g.bombs.push({ x: 2, y: 3, owner: 0, fuse: 900, radius: 2 }); // and another still ticking elsewhere
+run(g, 32);
+check("the bomb gets there first: the round freezes", g.phase === "roundEnd" && g.players[1].lives === 2);
+check("the finishing blow is on offer during the freeze", fatalityReady(g, 0) === "anywhere");
+run(g, 80);
+requestFatality(g, 0);
+step(g, 16);
+check("X in the freeze still performs the fatality", g.status === "over" && g.finish?.type === "fatality");
+check("…on the opponent where they fell", g.finish.victim === 1 && g.finish.x === 7 && g.finish.y === 12);
+check("…crediting the streak that earned it", g.finish.by === 0 && g.finish.streak === FATALITY_ANYWHERE_STREAK);
+
+console.log("fatality — on the last life");
+g = createGame({ mode: "siege" });
+for (let i = 0; i < FATALITY_STREAK; i += 1) loseRound(g, 1);
+g.players[1].lives = 1; g.players[1].selfShields = 0;
 boomAt(g, g.players[1].x, g.players[1].y, 0, 1);
 run(g, 32);
-check("the round-end freeze offers nothing", g.phase === "roundEnd" && fatalityReady(g, 0) === null);
+check("a match-winning kill with a fatality on offer holds the freeze open",
+  g.status === "playing" && g.phase === "roundEnd" && g.pendingWinner === 0);
+requestFatality(g, 0);
+step(g, 16);
+check("…so X still turns it into a fatality", g.status === "over" && g.winner === 0 && g.finish?.type === "fatality");
+
+g = createGame({ mode: "siege" });
+for (let i = 0; i < FATALITY_STREAK; i += 1) loseRound(g, 1);
+g.players[1].lives = 1; g.players[1].selfShields = 0;
+boomAt(g, g.players[1].x, g.players[1].y, 0, 1);
+run(g, 32 + ROUND_END_MS + 50);
+check("without X the kill decides it once the freeze ends",
+  g.status === "over" && g.winner === 0 && g.finish === null && g.pendingWinner === null);
+
+g = createGame();
+g.players[1].lives = 1;
+boomAt(g, g.players[1].x, g.players[1].y, 0, 2);
+run(g, 32);
+check("with no fatality on offer the last life still ends it at once", g.status === "over" && g.winner === 0);
+
+console.log("fatality — what the freeze does not allow");
+g = createGame({ mode: "siege" });
+for (let i = 0; i < FATALITY_STREAK - 1; i += 1) loseRound(g, 1);
+g.players[0].x = 1; g.players[0].y = 1;
+g.players[1].x = 9; g.players[1].y = 12;
+g.players[1].selfShields = 0;
+boomAt(g, 9, 12, 0, 1);
+run(g, 32);
+check("a kill that only reaches 4 needs range to where they fell",
+  g.players[0].streak === FATALITY_STREAK && fatalityReady(g, 0) === null);
 requestFatality(g, 0);
 run(g, ROUND_END_MS + 50);
-check("a press during the freeze is not saved for later", g.status === "playing" && g.phase === "live");
+check("out of range, X in the freeze does nothing", g.status === "playing" && g.phase === "live");
+
+g = createGame({ mode: "siege" });
+for (let i = 0; i < FATALITY_STREAK; i += 1) loseRound(g, 1);
+g.players[1].selfShields = 0;
+boomAt(g, g.players[1].x, g.players[1].y, 1, 1); // they blow themselves up
+run(g, 32);
+check("it works however they fell — even by their own bomb", fatalityReady(g, 0) === "anywhere");
+
+g = createGame({ mode: "siege" });
+for (let i = 0; i < FATALITY_STREAK; i += 1) loseRound(g, 1);
+g.players[0].x = 3; g.players[0].y = 8;
+g.players[1].x = 3; g.players[1].y = 9;
+g.players.forEach((pl) => { pl.selfShields = 0; });
+boomAt(g, 3, 8, 1, 2);
+boomAt(g, 3, 9, 0, 2);
+run(g, 32);
+check("a drawn round offers no finish to anyone", fatalityReady(g, 0) === null && fatalityReady(g, 1) === null);
+
+g = dealGame({ mode: "siege", obstacles: false });
+g.players[0].streak = FATALITY_ANYWHERE_STREAK;
+requestFatality(g, 0);
+run(g, 500);
+check("a press during the countdown does nothing", g.status === "playing" && g.phase === "countdown");
 check("Blitz can never get there — 3 kills already win",
   MODES.blitz.lives < FATALITY_STREAK);
 

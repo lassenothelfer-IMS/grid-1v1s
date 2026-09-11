@@ -740,9 +740,12 @@ function calloutFor(state) {
   if (state.phase === "roundEnd") {
     const fallen = state.fallen || [];
     const both = fallen.length > 1;
+    // The survivor can still land a fatality on the one who just fell.
+    const finisher = both ? null : state.players.find((p) => p.index !== fallen[0]);
+    const finishable = finisher && fatalityReady(state, finisher.index);
     return {
-      key: "end" + state.round,
-      kicker: roundTag + " over",
+      key: "end" + state.round + (finishable ? "f" : ""),
+      kicker: finishable ? "Finish them" : roundTag + " over",
       main: both ? "Both fall" : PLAYER_NAMES[fallen[0]] + " falls",
       kind: "small",
       player: both ? undefined : fallen[0],
@@ -812,10 +815,12 @@ function promptFor(state) {
     const name = PLAYER_NAMES[player.index];
     const key = fatalityKeyOf(player.index);
     const ready = offer !== "far";
+    const frozen = state.phase === "roundEnd";
     const text = controls(player.index)
       ? (ready ? name + " · Press " + key + " — Fatality"
         : name + " · Fatality ready — get within " + FATALITY_RANGE + " squares")
-      : (ready ? name + " can finish you — get away!" : name + " has a fatality — keep your distance");
+      : (ready ? name + (frozen ? " can still finish you" : " can finish you — get away!")
+        : name + " has a fatality — keep your distance");
     return { key: player.index + offer + text, text, player: player.index, ready };
   }
   return null;
@@ -857,7 +862,11 @@ function frame(now) {
       const fatality = session.state.finish && session.state.finish.type === "fatality";
       if (!session.overAt) {
         session.overAt = now;
-        if (fatality) boardWrap.classList.add("quake");
+        if (fatality) {
+          boardWrap.classList.add("quake");
+          streakEl.hidden = true; // the fatality gets the screen to itself
+          setPrompt(null);
+        }
       }
       if (!fatality || now - session.overAt >= FATALITY_SHOW_MS) {
         session.overShown = true;

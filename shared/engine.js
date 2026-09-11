@@ -218,6 +218,7 @@ export function createGame(options = {}) {
     status: "playing",   // "playing" | "over"
     winner: null,        // 0 | 1 | null (null on a draw)
     finish: null,        // { type: "fatality", by, victim, x, y, streak } when it ends in one
+    pendingWinner: null, // set while a match-winning kill holds the freeze open for a finish
     mode,
     maxLives: lives,
     elapsed: 0,
@@ -272,18 +273,33 @@ export function requestFatality(state, index) {
   player.fatalityQueued = true;
 }
 
+function fatalityOffer(player, target) {
+  if (player.streak >= FATALITY_ANYWHERE_STREAK) return "anywhere";
+  return ringDistance(player, target) <= FATALITY_RANGE ? "near" : "far";
+}
+
 // Whether `index` could finish the match right now:
 //   "anywhere" — streak long enough to strike from any distance
 //   "near"     — close enough to the opponent for the finishing move
-//   "far"      — the streak is there, the distance is not
-//   null       — no fatality on offer (short streak, round not live, someone down)
+//   "far"      — the streak is there, the distance is not (live rounds only)
+//   null       — no fatality on offer
+//
+// It is on offer in a live round, and also during the freeze right after you
+// drop your opponent — measured to where they fell. That way a bomb that beats
+// your X by a split second does not cost you the fatality: you finish them.
 export function fatalityReady(state, index) {
   const player = state.players[index];
   const target = state.players[index === 0 ? 1 : 0];
-  if (!player || !target || state.status !== "playing" || state.phase !== "live") return null;
-  if (!player.alive || !target.alive || player.streak < FATALITY_STREAK) return null;
-  if (player.streak >= FATALITY_ANYWHERE_STREAK) return "anywhere";
-  return ringDistance(player, target) <= FATALITY_RANGE ? "near" : "far";
+  if (!player || !target || state.status !== "playing") return null;
+  if (!player.alive || player.streak < FATALITY_STREAK) return null;
+  if (state.phase === "live") {
+    return target.alive ? fatalityOffer(player, target) : null;
+  }
+  if (state.phase === "roundEnd" && state.fallen.length === 1 && state.fallen[0] === target.index) {
+    const offer = fatalityOffer(player, target);
+    return offer === "far" ? null : offer; // nobody moves in the freeze, so "far" stays far
+  }
+  return null;
 }
 
 function inBounds(x, y) {
@@ -505,6 +521,21 @@ function dropPresses(state) {
   }
 }
 
+// Acts on any fatality press that is on offer; returns true if the match ended.
+// A press that is not on offer simply does nothing.
+function resolveFatalityPresses(state) {
+  for (const player of state.players) {
+    if (!player.fatalityQueued) continue;
+    player.fatalityQueued = false;
+    const offer = fatalityReady(state, player.index);
+    if (offer === "near" || offer === "anywhere") {
+      performFatality(state, player);
+      return true;
+    }
+  }
+  return false;
+}
+
 // The match ends on the spot in the executor's favour.
 function performFatality(state, player) {
   const victim = state.players[player.index === 0 ? 1 : 0];
@@ -520,6 +551,7 @@ function performFatality(state, player) {
   victim.alive = false;
   state.status = "over";
   state.winner = player.index;
+  state.pendingWinner = null;
   state.events.push({ type: "fatality", ...state.finish });
 }
 
@@ -577,28 +609,30 @@ export function step(state, dt) {
   }
 
   // After a life is lost: the board freezes — no moves, no fuses, no damage —
-  // while the last blast fades out, then the next round starts.
+  // while the last blast fades out, then the next round starts. The one thing
+  // that still works is finishing the opponent who just fell with a fatality.
   if (state.phase === "roundEnd") {
+    if (resolveFatalityPresses(state)) return state;
     dropPresses(state);
     coolFire(state, dt);
     state.phaseLeft -= dt;
-    if (state.phaseLeft <= 0) startNextRound(state);
+    if (state.phaseLeft <= 0) {
+      if (state.pendingWinner !== null) {
+        // The match-winning kill stands as it was: no fatality came.
+        state.status = "over";
+        state.winner = state.pendingWinner;
+        state.pendingWinner = null;
+      } else {
+        startNextRound(state);
+      }
+    }
     return state;
   }
 
   state.liveFor += dt;
 
   // 0. A fatality, if one was called and is on offer, ends everything at once.
-  //    Called when it is not on offer, the press simply does nothing.
-  for (const player of state.players) {
-    if (!player.fatalityQueued) continue;
-    player.fatalityQueued = false;
-    const offer = fatalityReady(state, player.index);
-    if (offer === "near" || offer === "anywhere") {
-      performFatality(state, player);
-      return state;
-    }
-  }
+  if (resolveFatalityPresses(state)) return state;
 
   // 1. Players act.
   for (const player of state.players) {
@@ -655,8 +689,19 @@ export function step(state, dt) {
       state.status = "over";
       state.winner = null;
     } else if (out.length === 1) {
-      state.status = "over";
-      state.winner = out[0].index === 0 ? 1 : 0;
+      const winner = state.players[out[0].index === 0 ? 1 : 0];
+      const finishable = winner.streak >= FATALITY_STREAK && fatalityOffer(winner, out[0]) !== "far";
+      if (finishable) {
+        // Match point with a fatality on offer: hold the freeze open so the
+        // winner can still finish them. Without it, the kill decides the match.
+        state.phase = "roundEnd";
+        state.phaseLeft = ROUND_END_MS;
+        state.pendingWinner = winner.index;
+        state.events.push({ type: "roundEnd", round: state.round, fallen: state.fallen.slice() });
+      } else {
+        state.status = "over";
+        state.winner = winner.index;
+      }
     } else {
       state.phase = "roundEnd";
       state.phaseLeft = ROUND_END_MS;
