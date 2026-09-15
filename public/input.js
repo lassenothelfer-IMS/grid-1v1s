@@ -5,9 +5,19 @@
 //
 // OS key auto-repeat is ignored: its rate differs per machine, so the walking
 // rhythm is timed by the engine instead (HOLD_DELAY_MS / HOLD_REPEAT_MS).
+// Keys are matched by physical position (event.code), so they sit in the same
+// place on QWERTY and QWERTZ keyboards.
 
 export const LOCAL_SCHEMES = [
-  { up: ["KeyW"], down: ["KeyS"], left: ["KeyA"], right: ["KeyD"], bomb: ["Space"], fatality: ["KeyX"] },
+  {
+    up: ["KeyW"],
+    down: ["KeyS"],
+    left: ["KeyA"],
+    right: ["KeyD"],
+    bomb: ["Space"],
+    fatality: ["KeyX"],
+    ability: ["KeyE"],
+  },
   {
     up: ["ArrowUp"],
     down: ["ArrowDown"],
@@ -15,6 +25,7 @@ export const LOCAL_SCHEMES = [
     right: ["ArrowRight"],
     bomb: ["Enter", "NumpadEnter"],
     fatality: ["ShiftRight"], // X belongs to player 1's side of the keyboard
+    ability: ["Period", "ControlRight", "Numpad0"],
   },
 ];
 
@@ -27,15 +38,26 @@ export const ONLINE_SCHEMES = [
     right: ["KeyD", "ArrowRight"],
     bomb: ["Space", "Enter", "NumpadEnter"],
     fatality: ["KeyX"],
+    ability: ["KeyE", "Period"],
   },
 ];
 
+// How the keys above read in the legend and the HUD.
+export const KEY_LABELS = {
+  local: [
+    { move: "W A S D", bomb: "Space", fatality: "X", ability: "E" },
+    { move: "Arrows", bomb: "Enter", fatality: "R-Shift", ability: ". / R-Ctrl" },
+  ],
+  online: { move: "WASD / Arrows", bomb: "Space / Enter", fatality: "X", ability: "E / ." },
+};
+
 const SWALLOW = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"]);
 
-export function createInput(schemes, { onMove, onHold, onBomb, onFatality }) {
+export function createInput(schemes, { onMove, onHold, onBomb, onFatality, onAbility }) {
   const moveKeys = new Map(); // code -> { slot, dir }
   const bombKeys = new Map(); // code -> slot
   const fatalityKeys = new Map(); // code -> slot
+  const abilityKeys = new Map(); // code -> slot
   const stacks = schemes.map(() => []);
 
   schemes.forEach((scheme, slot) => {
@@ -44,6 +66,7 @@ export function createInput(schemes, { onMove, onHold, onBomb, onFatality }) {
     }
     for (const code of scheme.bomb) bombKeys.set(code, slot);
     for (const code of scheme.fatality || []) fatalityKeys.set(code, slot);
+    for (const code of scheme.ability || []) abilityKeys.set(code, slot);
   });
 
   function topOf(slot) {
@@ -61,6 +84,9 @@ export function createInput(schemes, { onMove, onHold, onBomb, onFatality }) {
 
     const fatalitySlot = fatalityKeys.get(event.code);
     if (fatalitySlot !== undefined) onFatality?.(fatalitySlot);
+
+    const abilitySlot = abilityKeys.get(event.code);
+    if (abilitySlot !== undefined) onAbility?.(abilitySlot);
 
     const binding = moveKeys.get(event.code);
     if (!binding) return;

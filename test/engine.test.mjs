@@ -7,13 +7,22 @@ import {
   setHeld,
   requestBomb,
   requestFatality,
+  requestAbility,
   fatalityReady,
   sniperTargets,
+  viewFor,
 } from "../shared/engine.js";
 import {
   COLS,
   ROWS,
   SPAWNS,
+  TEAM_SPAWNS,
+  COLOR_IDS,
+  NAME_MAX,
+  SHADE_VANISH_MS,
+  DECOY_MS,
+  DECOY_COOLDOWN_MS,
+  ROUND_END_KILLCAM_MS,
   MODES,
   FATALITY_STREAK,
   FATALITY_RANGE,
@@ -724,6 +733,372 @@ for (const [dx, dy] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0
 requestBomb(g, 0);
 step(g, 16);
 check("a target boxed in by walls cannot be sniped", g.bombs.length === 0 && g.events.some((e) => e.type === "bombRefused"));
+
+// --- the newer classes ------------------------------------------------------------
+
+const burning = (state, x, y) => state.blasts.some((b) => b.x === x && b.y === y);
+const untouchable = (state) => state.players.forEach((p) => { p.invulnIn = 999999; });
+
+console.log("quickfuse");
+g = createGame({ classes: ["quickfuse", "classic"] });
+requestBomb(g, 0);
+step(g, 16);
+check("a quickfuse bomb gets a 0.8 s fuse and a 1-square radius",
+  g.bombs[0].fuseMax === 800 && g.bombs[0].radius === 1, JSON.stringify(g.bombs[0]));
+tap(g, 0, "right");
+run(g, 800 - 16 - 48 - MOVE_COOLDOWN_MS - 40);
+check("…still ticking just before 0.8 s", g.bombs.length === 1);
+run(g, 80);
+check("…and gone right after", g.bombs.length === 0 && g.blasts.length > 0);
+{
+  const c = createGame();
+  requestBomb(c, 0);
+  step(c, 16);
+  check("other classes keep the 1.5 s fuse", c.bombs[0].fuseMax === BOMB_FUSE_MS);
+}
+
+console.log("diagonal");
+g = createGame({ classes: ["diagonal", "classic"] });
+untouchable(g);
+requestBomb(g, 0);
+step(g, 16);
+check("a diagonal bomb is X-shaped", g.bombs[0].shape === "x" && g.bombs[0].radius === 2);
+g.bombs = [{ x: 5, y: 7, owner: 0, fuse: 16, radius: 2, shape: "x" }];
+run(g, 32);
+check("an X blast burns both diagonals out to its radius",
+  [[4, 6], [3, 5], [6, 6], [7, 5], [4, 8], [3, 9], [6, 8], [7, 9]].every(([x, y]) => burning(g, x, y)));
+check("…its own square too", burning(g, 5, 7));
+check("…but not the straight lines", ![[5, 6], [5, 8], [4, 7], [6, 7], [5, 5]].some(([x, y]) => burning(g, x, y)));
+g = createGame({ classes: ["diagonal", "classic"] });
+untouchable(g);
+put(g, 6, 6, TILE_WALL);
+put(g, 4, 8, 13);
+g.bombs = [{ x: 5, y: 7, owner: 0, fuse: 16, radius: 2, shape: "x" }];
+run(g, 32);
+check("walls stop a diagonal arm", !burning(g, 6, 6) && !burning(g, 7, 5));
+check("crates break and stop it", burning(g, 4, 8) && tileAt(g, 4, 8) === TILE_FLOOR && !burning(g, 3, 9));
+g = createGame({ classes: ["diagonal", "classic"] });
+g.players[0].x = 5; g.players[0].y = 5;
+requestBomb(g, 0);
+step(g, 16);
+tap(g, 0, "right");
+run(g, BOMB_FUSE_MS);
+check("standing right beside your own X bomb is safe",
+  g.players[0].alive && g.players[0].selfShields === 1 && g.players[0].x === 6);
+
+console.log("line");
+g = createGame({ classes: ["line", "classic"] });
+untouchable(g);
+check("a line player starts facing the enemy side", g.players[0].facing === "down");
+requestBomb(g, 0);
+step(g, 16);
+check("the bomb is aimed the way its owner faces", g.bombs[0].shape === "line" && g.bombs[0].dir === "down");
+tap(g, 0, "right");
+run(g, BOMB_FUSE_MS);
+check("its fire runs all the way to the far edge",
+  Array.from({ length: ROWS }, (_, y) => y).every((y) => burning(g, SPAWNS[0].x, y)));
+check("…and nowhere else", !burning(g, SPAWNS[0].x - 1, 0) && !burning(g, SPAWNS[0].x + 1, 0));
+g = createGame({ classes: ["line", "classic"] });
+untouchable(g);
+g.players[0].x = 5; g.players[0].y = 5;
+tap(g, 0, "left");
+requestBomb(g, 0);
+step(g, 16);
+check("walking turns you: the next bomb fires left", g.bombs[0].dir === "left");
+g.bombs[0].fuse = 16;
+run(g, 32);
+check("…from the bomb to the left edge", [0, 1, 2, 3, 4].every((x) => burning(g, x, 5)) && !burning(g, 5, 5));
+g = createGame({ classes: ["line", "classic"] });
+g.players[0].x = 0; g.players[0].y = 5;
+tap(g, 0, "left");
+check("pressing into the edge turns without moving", g.players[0].x === 0 && g.players[0].facing === "left");
+g = createGame({ classes: ["line", "classic"] });
+untouchable(g);
+put(g, 5, 9, 17);
+put(g, 3, 5, TILE_WALL);
+g.bombs = [
+  { x: 5, y: 5, owner: 0, fuse: 16, radius: CLASSES.line.blastRadius, shape: "line", dir: "down" },
+  { x: 6, y: 5, owner: 0, fuse: 16, radius: CLASSES.line.blastRadius, shape: "line", dir: "left" },
+];
+run(g, 32);
+check("a crate still stops a line", burning(g, 5, 9) && !burning(g, 5, 10) && tileAt(g, 5, 9) === TILE_FLOOR);
+check("…and so does a wall", burning(g, 4, 5) && !burning(g, 3, 5) && !burning(g, 2, 5));
+
+console.log("shade");
+g = createGame({ classes: ["shade", "classic"] });
+run(g, SHADE_VANISH_MS - 100);
+check("a shade is seen while it has not stood still long enough", !g.players[0].hidden);
+run(g, 150);
+check("after a second of stillness it vanishes", g.players[0].hidden);
+{
+  const theirs = viewFor(g, 1).players[0];
+  const mine = viewFor(g, 0).players[0];
+  check("the other side's view carries no position for it", theirs.x === null && theirs.y === null && theirs.hidden);
+  check("its own view still does", mine.x === SPAWNS[0].x && mine.y === SPAWNS[0].y);
+  check("…and the real state is untouched", g.players[0].x === SPAWNS[0].x);
+}
+tap(g, 0, "down");
+check("one step keeps it hidden", g.players[0].hidden && g.players[0].y === 1);
+tap(g, 0, "down");
+check("a second step straight after gives it away", !g.players[0].hidden && g.players[0].y === 2);
+run(g, SHADE_VANISH_MS + 50);
+tap(g, 0, "down");
+run(g, SHADE_VANISH_MS + 50);
+check("waiting again makes the next step quiet too", g.players[0].hidden && g.players[0].y === 3);
+requestBomb(g, 0);
+step(g, 16);
+check("placing a bomb gives it away", !g.players[0].hidden);
+g = createGame({ classes: ["shade", "sniper"] });
+g.players[0].x = 5; g.players[0].y = 4;
+run(g, SHADE_VANISH_MS + 50);
+check("a sniper cannot aim at a shade it cannot see", g.players[0].hidden && sniperTargets(g, 1) === null);
+g = createGame({ classes: ["shade", "classic"] });
+g.players[0].x = 5; g.players[0].y = 5;
+g.players[1].x = 5; g.players[1].y = 7;
+run(g, SHADE_VANISH_MS + 50);
+tap(g, 1, "up");
+tap(g, 1, "up");
+check("walking into a hidden shade is blocked — and reveals it",
+  g.players[1].y === 6 && !g.players[0].hidden);
+g = createGame({ classes: ["shade", "classic"], mode: "siege" });
+g.players.forEach((p) => { p.streak = 0; });
+g.players[1].streak = FATALITY_STREAK;
+g.players[0].x = 5; g.players[0].y = 5;
+g.players[1].x = 6; g.players[1].y = 6;
+run(g, SHADE_VANISH_MS + 50);
+check("a finishing move needs its target in sight", g.players[0].hidden && fatalityReady(g, 1) === "far");
+g = createGame({ classes: ["classic", "classic"] });
+run(g, 5000);
+check("nobody else ever hides", g.players.every((p) => !p.hidden));
+
+console.log("decoy");
+g = createGame({ classes: ["decoy", "classic"] });
+g.players[0].x = 5; g.players[0].y = 5;
+g.players[1].x = 6; g.players[1].y = 9;
+requestAbility(g, 0);
+step(g, 16);
+check("the ability drops a decoy where you stand",
+  g.decoys.length === 1 && g.decoys[0].x === 5 && g.decoys[0].y === 5 && g.decoys[0].owner === 0);
+tap(g, 0, "left");
+check("a step sideways sends it the other way", g.players[0].x === 4 && g.decoys[0].x === 6 && g.decoys[0].y === 5);
+tap(g, 0, "down");
+check("a step down takes it down too", g.players[0].y === 6 && g.decoys[0].x === 6 && g.decoys[0].y === 6);
+tap(g, 1, "up");
+tap(g, 1, "up");
+tap(g, 1, "up");
+check("it blocks the enemy like a real player would", g.players[1].y === 7 && g.decoys[0].y === 6);
+requestAbility(g, 0);
+step(g, 16);
+check("while on cooldown the ability does nothing",
+  g.decoys.length === 1 && g.decoys[0].x === 6 && g.events.some((e) => e.type === "abilityRefused"));
+run(g, DECOY_MS);
+check("the decoy fades after 3 s", g.decoys.length === 0);
+run(g, DECOY_COOLDOWN_MS - DECOY_MS);
+requestAbility(g, 0);
+step(g, 16);
+check("…and the cooldown runs out", g.decoys.length === 1);
+g.players[0].invulnIn = 999999;
+boomAt(g, g.decoys[0].x, g.decoys[0].y, 1);
+run(g, 32);
+check("fire pops a decoy", g.decoys.length === 0 && g.players[0].alive);
+g = createGame({ classes: ["decoy", "sniper"] });
+g.players[0].x = 1; g.players[0].y = 1;
+g.decoys.push({ x: 6, y: 10, owner: 0, ttl: DECOY_MS });
+const aimed = sniperTargets(g, 1) || [];
+check("a sniper aims at whichever copy is nearer — even the fake",
+  aimed.length > 0 && aimed.every((c) => Math.max(Math.abs(c.x - 6), Math.abs(c.y - 10)) === 1));
+g = createGame();
+requestAbility(g, 0);
+step(g, 16);
+check("classes without an ability ignore the key", g.decoys.length === 0);
+
+// --- 2v2 ------------------------------------------------------------------------
+
+console.log("2v2 — the setup");
+let t = createGame({ format: "teams" });
+check("four players, two teams, top against bottom",
+  t.players.length === 4 && t.players.map((p) => p.team).join() === "0,1,0,1" &&
+  t.players.every((p) => p.y === (p.team === 0 ? 0 : ROWS - 1)));
+check("they start on the four team spawns",
+  t.players.every((p) => p.x === TEAM_SPAWNS[p.index].x && p.y === TEAM_SPAWNS[p.index].y));
+check("the spawns mirror each other",
+  t.players.every((p) => {
+    const twin = t.spawns[p.index ^ 1];
+    return twin.x === COLS - 1 - p.x && twin.y === ROWS - 1 - p.y;
+  }));
+check("everyone gets their own colour and a default name",
+  new Set(t.players.map((p) => p.color)).size === 4 && t.players.map((p) => p.name).join() === "Player 1,Player 2,Player 3,Player 4");
+{
+  let clear = true;
+  let mirrored = true;
+  for (let seed = 1; seed <= 200; seed += 1) {
+    const tiles = generateLayout(seed, TEAM_SPAWNS);
+    for (let i = 0; i < tiles.length; i += 1) {
+      const x = i % COLS, y = Math.floor(i / COLS);
+      if (TEAM_SPAWNS.some((s) => Math.abs(s.x - x) + Math.abs(s.y - y) <= SPAWN_CLEAR_RADIUS) && tiles[i] !== TILE_FLOOR) clear = false;
+      const twin = tiles[tiles.length - 1 - i];
+      if ((tiles[i] === TILE_WALL) !== (twin === TILE_WALL) || (tiles[i] > 0) !== (twin > 0)) mirrored = false;
+    }
+  }
+  check("2v2 boards keep all four spawns clear", clear);
+  check("…and stay point-symmetric", mirrored);
+  const real = dealGame({ format: "teams", seed: 5 });
+  check("a 2v2 match deals its board around the team spawns",
+    JSON.stringify(real.layout) === JSON.stringify(generateLayout(5, TEAM_SPAWNS)));
+}
+
+// Knocks one player out with enemy fire (or their own, with owner = index).
+function knock(state, index, owner) {
+  const victim = state.players[index];
+  victim.invulnIn = 0;
+  victim.selfShields = 0;
+  victim.shields = 0;
+  boomAt(state, victim.x, victim.y, owner ?? (index + 1) % state.players.length, 1);
+  run(state, 32);
+}
+
+console.log("2v2 — rounds");
+t = createGame({ format: "teams" });
+knock(t, 1, 0);
+check("one player down does not end the round", t.phase === "live" && !t.players[1].alive && t.players[3].alive);
+check("…and costs no life yet", t.players.every((p) => p.lives === START_LIVES));
+check("the knockout is credited", t.kills.length === 1 && t.kills[0].victim === 1 && t.kills[0].by === 0 &&
+  t.players[0].stats.kills === 1 && t.players[1].stats.deaths === 1);
+knock(t, 3, 2);
+check("a team with nobody standing loses the round", t.phase === "roundEnd" && t.history[0] === 0);
+check("the whole team loses one life together",
+  t.players[1].lives === START_LIVES - 1 && t.players[3].lives === START_LIVES - 1 &&
+  t.players[0].lives === START_LIVES && t.players[2].lives === START_LIVES);
+check("the winning team shares the streak", t.players[0].streak === 1 && t.players[2].streak === 1 &&
+  t.players[1].streak === 0 && t.players[3].streak === 0);
+run(t, ROUND_END_MS + 50);
+check("the next round brings everyone back to their spawns",
+  t.round === 2 && t.players.every((p) => p.alive && p.x === TEAM_SPAWNS[p.index].x && p.y === TEAM_SPAWNS[p.index].y));
+t.players.forEach((p) => { p.lives = 1; });
+knock(t, 0, 1);
+knock(t, 2, 3);
+check("a team out of lives loses the match", t.status === "over" && t.winner === 1);
+
+t = createGame({ format: "teams" });
+t.players[0].x = 3; t.players[0].y = 8;
+t.players[1].x = 3; t.players[1].y = 9;
+t.players[2].invulnIn = 0; t.players[3].invulnIn = 0;
+knock(t, 2, 1);
+knock(t, 3, 0);
+t.players.forEach((p) => { p.selfShields = 0; p.invulnIn = 0; });
+boomAt(t, 3, 8, 1, 2);
+boomAt(t, 3, 9, 0, 2);
+run(t, 32);
+check("both teams wiped on the same tick is a drawn round",
+  t.phase === "roundEnd" && t.history[0] === null && t.players.every((p) => p.lives === START_LIVES - 1));
+
+console.log("2v2 — friendly fire");
+t = createGame({ format: "teams" });
+t.players[2].x = 5; t.players[2].y = 5;
+t.players[2].invulnIn = 0;
+boomAt(t, 5, 5, 0, 1);
+run(t, 48);
+check("a teammate's fire counts as your own: the self shield takes it",
+  t.players[2].alive && t.players[2].selfShields === 0);
+run(t, ABSORB_GRACE_MS);
+boomAt(t, 5, 5, 0, 1);
+run(t, 48);
+check("…the next one knocks you out", !t.players[2].alive);
+check("…and is no kill for your teammate", t.players[0].stats.kills === 0 && t.kills[0].by === 0);
+t = createGame({ format: "teams" });
+t.players[2].x = 5; t.players[2].y = 5;
+t.players[2].invulnIn = 0;
+boomAt(t, 5, 5, 0, 1);
+boomAt(t, 6, 5, 3, 1);
+run(t, 48);
+check("enemy fire mixed in is still enemy fire", !t.players[2].alive && t.kills[0].by === 3);
+
+console.log("2v2 — a shared fatality");
+t = createGame({ format: "teams", mode: "siege" });
+for (let i = 0; i < FATALITY_STREAK; i += 1) {
+  knock(t, 1, 0);
+  knock(t, 3, 0);
+  run(t, ROUND_END_MS + 50);
+}
+check("four rounds in a row give both teammates a 4 streak", t.players[0].streak === 4 && t.players[2].streak === 4);
+t.players[2].x = 5; t.players[2].y = 7;
+t.players[3].x = 6; t.players[3].y = 8;
+check("either teammate can use it — here the one in reach", fatalityReady(t, 2) === "near" && fatalityReady(t, 0) === "far");
+requestFatality(t, 2);
+step(t, 16);
+check("it ends the match for the whole enemy team",
+  t.status === "over" && t.winner === 0 && t.players[1].lives === 0 && t.players[3].lives === 0);
+check("…landing on the enemy in reach", t.finish.by === 2 && t.finish.victim === 3 &&
+  JSON.stringify(t.finish.victims) === "[1,3]");
+
+console.log("names and colours");
+{
+  const bell = String.fromCharCode(7);
+  const named = createGame({ players: [{ name: "  Lasse" + bell + "   N  ", color: "jade" }, { name: "x".repeat(40), color: "jade" }] });
+  check("names are tidied up", named.players[0].name === "Lasse N", JSON.stringify(named.players[0].name));
+  check("…and kept short", named.players[1].name.length === NAME_MAX);
+  check("a colour someone already has goes to the next free one",
+    named.players[0].color === "jade" && named.players[1].color !== "jade" && COLOR_IDS.includes(named.players[1].color));
+  const blank = createGame({ players: [{ name: "   ", color: "nope" }] });
+  check("a blank name and an unknown colour fall back to the defaults",
+    blank.players[0].name === "Player 1" && blank.players[0].color === "ember");
+}
+
+console.log("match stats");
+g = createGame();
+requestBomb(g, 0);
+step(g, 16);
+check("bombs placed are counted", g.players[0].stats.bombs === 1);
+g = createGame();
+untouchable(g);
+put(g, 8, 8, 21);
+boomAt(g, 8, 7, 0, 1);
+run(g, 32);
+check("broken crates go to whoever's fire broke them", g.players[0].stats.crates === 1 && g.players[1].stats.crates === 0);
+g = createGame();
+g.players[0].x = 5; g.players[0].y = 5;
+boomAt(g, 5, 7, 1, 1);
+run(g, 32);
+check("enemy fire right beside you is a near miss", g.players[0].stats.nearMisses === 1 && g.players[0].alive);
+boomAt(g, 5, 9, 1, 1);
+run(g, 32);
+check("fire further away is not", g.players[0].stats.nearMisses === 1);
+g = createGame();
+g.players[0].invulnIn = 0;
+boomAt(g, g.players[0].x, g.players[0].y, 0, 1);
+run(g, 32);
+check("hits a shield took are counted", g.players[0].stats.blocked === 1);
+g = createGame({ mode: "siege" });
+loseRound(g, 1);
+loseRound(g, 1);
+loseRound(g, 0, 0);
+check("kills, deaths and self-destructs are counted",
+  g.players[0].stats.kills === 2 && g.players[1].stats.deaths === 2 &&
+  g.players[0].stats.deaths === 1 && g.players[0].stats.selfDestructs === 1);
+check("the best streak outlives the streak itself", g.players[0].stats.bestStreak === 2 && g.players[0].streak === 0);
+
+console.log("kill cam");
+g = createGame({ killCam: true });
+boomAt(g, g.players[1].x, g.players[1].y, 0, 1);
+run(g, 32);
+check("with the kill cam on, the freeze is long enough for the replay",
+  g.phase === "roundEnd" && g.phaseLeft > ROUND_END_MS && g.phaseLeft <= ROUND_END_KILLCAM_MS);
+check("the round remembers who got whom, and when",
+  g.kills.length === 1 && g.kills[0].victim === 1 && g.kills[0].by === 0 && g.kills[0].at > 0);
+g = createGame();
+boomAt(g, g.players[1].x, g.players[1].y, 0, 1);
+run(g, 32);
+check("without it, the freeze stays short", g.phaseLeft <= ROUND_END_MS);
+g = createGame({ mode: "siege" });
+for (let i = 0; i < FATALITY_STREAK - 1; i += 1) loseRound(g, 1);
+g.killCam = true;
+g.players[0].x = 5; g.players[0].y = 7;
+g.players[1].x = 6; g.players[1].y = 8;
+g.players[1].selfShields = 0;
+boomAt(g, 6, 8, 0, 1);
+run(g, 32);
+check("a fatality on offer keeps the freeze short, kill cam or not",
+  fatalityReady(g, 0) !== null && g.phaseLeft <= ROUND_END_MS);
 
 console.log("");
 console.log(failures === 0 ? "ALL CHECKS PASSED" : failures + " CHECK(S) FAILED");

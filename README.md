@@ -1,7 +1,8 @@
 # Grid 1v1
 
 Zwei Spieler, ein 12×16-Raster, Bomben mit 1,5 Sekunden Zündschnur.
-Spielbar **lokal an einem Gerät** oder **online über einen Raumcode**.
+Spielbar **lokal an einem Gerät** oder **online über einen Raumcode** — online auch
+als **2v2** mit vier Geräten.
 
 ## Regeln
 
@@ -56,6 +57,62 @@ Vor der Klassenwahl wird der Modus gewählt; online entscheidet der Host.
 | **Blitz** | 3 | 5 |
 | **Siege** | 7 | 13 |
 
+Auf demselben Bildschirm stellt man außerdem die **Killcam** an oder aus (siehe unten), und
+beim Erstellen eines Online-Raums das Format: **1v1** oder **2v2**.
+
+## 2v2
+
+Online können vier Leute in zwei Teams spielen — jeder auf seinem eigenen Gerät.
+
+- Der Host wählt beim Erstellen „2v2". Wer beitritt, landet in der **Lobby**: vier Plätze,
+  zwei pro Seite (oben/unten). Mit einem Tipp auf einen freien Platz wechselt man die Seite.
+  Das Match startet erst, wenn der Host auf **Start match** drückt — und nur, wenn alle vier
+  da sind.
+- Jedes Team startet von zwei eigenen Startfeldern; alle vier sind punktsymmetrisch und
+  bleiben frei von Mauern und Kisten.
+- **Leben und Killstreak gehören dem Team.** Wer getroffen wird, ist für den Rest der Runde
+  raus (eine Aschemarkierung zeigt, wo); die Runde endet erst, wenn **ein Team niemanden mehr
+  stehen hat**. Dieses Team verliert ein Leben. Fallen beide Teams im selben Moment:
+  unentschiedene Runde.
+- **Eigenbeschuss:** Feuer des Teammitglieds zählt wie das eigene — der Schild gegen eigene
+  Bomben fängt den ersten Treffer ab, und ein Treffer am Teamkollegen ist kein Kill.
+- **Gemeinsame Fatality:** Ab 4 gewonnenen Runden in Folge kann jedes Teammitglied die
+  Fatality auslösen (innerhalb von 2 Feldern um irgendeinen Gegner, ab 5 von überall). Sie
+  beendet das Match für das ganze gegnerische Team.
+- Im 2v2 trägt der Ring um die Figuren des unteren Teams eine Raute statt eines Kreises —
+  so erkennt man Teamkollegen auch bei frei gewählten Farben.
+- Verliert jemand die Verbindung, pausiert das Match für alle, wie im 1v1. Verlässt ein Gast
+  die Lobby, wird nur sein Platz frei; verlässt jemand ein laufendes Match, endet es.
+
+## Namen und Farben
+
+Über den Klassenkarten stehen ein **Namensfeld** und **sechs Farben** (Ember, Violet, Jade,
+Frost, Crimson, Pearl). Beides merkt sich das Gerät — lokal für beide Spieler getrennt,
+online für dich. Namen werden auf 14 Zeichen gekürzt; leer bleibt es „Player 1" usw.
+Eine Farbe gibt es pro Match nur einmal: lokal ist die von Player 1 für Player 2 gesperrt,
+online bekommt man die nächste freie, wenn die gewünschte schon vergeben ist. Die Farbe färbt
+alles, was zu einem Spieler gehört: Figur, Bomben-Rand, Startfeld, Karte, Leben, Ticker,
+Rundenpunkte, Touch-Leiste.
+
+## Killcam
+
+Ist die Killcam an (Standard), wird nach jeder Runde **die letzte Sekunde vor dem
+entscheidenden Treffer in Zeitlupe** (0,4×) wiederholt — mit Balken oben und unten, einem
+Fadenkreuz, wo es passiert ist, und wer wen erwischt hat (oder „own bomb"). Die Pause nach der
+Runde dauert dafür 3,4 statt 1,5 Sekunden. Ist eine Fatality möglich, entfällt die Killcam, und
+die Pause bleibt kurz — der Finisher hat Vorrang. Auch der letzte Kill eines Matches läuft noch
+einmal, bevor die Ergebniskarte kommt (außer bei einer Fatality, die ihre eigene Animation
+hat). Online zeigt die Killcam genau das, was man selbst gesehen hat — ein versteckter Shade
+bleibt auch in der Wiederholung unsichtbar.
+
+## Match-Statistik
+
+Die Ergebniskarte zeigt pro Spieler: **Kills, Tode, gelegte Bomben, zerstörte Kisten, Near
+Misses** (gegnerisches Feuer direkt neben einem, das einen nicht getroffen hat), **abgefangene
+Treffer, Selbstzerstörungen** und die **längste Serie**. Der Bestwert jeder Zeile leuchtet in
+der Farbe seines Spielers (bei Toden der niedrigste). Kisten gehören dem, dessen Feuer sie
+zuerst erreicht; ein Kill dem Gegner, dessen Feuer auf dem Feld brannte.
+
 ## Killstreaks und Fatality
 
 - Gewinnt man eine Runde — der Gegner verliert ein Leben, man selbst nicht, egal wie er
@@ -108,6 +165,40 @@ wie viel man aushält — nicht die Laufgeschwindigkeit.
 | **Speedy** | 5 | 1 Feld | auf dem eigenen Feld | 1 (eigene Bombe: 2) |
 | **Sniper** | 2 | 2 Felder | auf einem der 8 Felder **um den Gegner** | 1 (eigene Bombe: 2) |
 | **Tank** | 2 | 1 Feld | auf dem eigenen Feld | 2 (eigene Bombe: 3) |
+| **Quickfuse** | 3 | 1 Feld | auf dem eigenen Feld, Zündschnur **0,8 s** | 1 (eigene Bombe: 2) |
+| **Diagonal** | 3 | 2 Felder, als **X** | auf dem eigenen Feld | 1 (eigene Bombe: 2) |
+| **Line** | 2 | eine Richtung **bis zum Rand** | auf dem eigenen Feld | 1 (eigene Bombe: 2) |
+| **Shade** | 2 | 2 Felder | auf dem eigenen Feld; wird unsichtbar | 1 (eigene Bombe: 2) |
+| **Decoy** | 2 | 2 Felder | auf dem eigenen Feld; Fähigkeit: Köder | 1 (eigene Bombe: 2) |
+
+**Quickfuse im Detail:** Die Bombe zündet schon nach 0,8 Sekunden, der Ring um die Bombe läuft
+entsprechend schneller ab. Dafür reicht das Feuer nur ein Feld weit.
+
+**Diagonal im Detail:** Das Feuer geht in die vier Diagonalen statt geradeaus — gerade neben
+der Bombe ist man sicher, schräg daneben nicht. Mauern und Kisten stoppen auch die Diagonalen.
+Die Bombe trägt ein kleines Kreuz.
+
+**Line im Detail:** Das Feuer schießt nur in eine Richtung, dafür bis zum Spielfeldrand (Mauern
+stoppen es, Kisten zerbrechen und stoppen es). Die Richtung ist die, in die man zuletzt gelaufen
+ist oder laufen wollte — gegen eine Wand oder den Rand drücken dreht einen, ohne zu gehen. Ein
+kleiner Pfeil an der Figur zeigt die Blickrichtung; liegt die Bombe, markieren schwache Pfeile
+die Bahn, die sie gleich abbrennt. Auf dem eigenen Bombenfeld selbst brennt es natürlich auch.
+
+**Shade im Detail (nur online):** Wer eine Sekunde stillsteht, verschwindet vom Bildschirm des
+gegnerischen Teams. Ein einzelner Schritt hält einen versteckt; ein zweiter Schritt, bevor man
+wieder eine Sekunde stand, macht einen sichtbar — ebenso eine gelegte Bombe, ein abgefangener
+Treffer oder ein Gegner, der in einen hineinläuft. Sniper können einen versteckten Shade nicht
+anvisieren, und eine Fatality auf 2 Felder braucht Sichtkontakt (ab 5 in Folge nicht). Der Server
+schickt dem gegnerischen Team **gar keine Position** für einen versteckten Shade — auch nicht
+im Ereignis-Log —, man kann ihn also nicht aus den Netzwerkdaten lesen. Das eigene Team sieht
+ihn halbdurchsichtig. Lokal ist die Klasse gesperrt, weil beide auf denselben Bildschirm schauen.
+
+**Decoy im Detail:** Die Fähigkeitstaste setzt eine Kopie von dir auf dein Feld, für
+**3 Sekunden** (danach 3 Sekunden Abklingzeit, also alle 6 Sekunden). Die Kopie macht jeden
+deiner Schritte mit — hoch und runter gleich, links und rechts gespiegelt. Für das gegnerische
+Team sieht sie genau wie du aus und blockiert wie ein Spieler; dein Team sieht sie
+halbdurchsichtig. Feuer lässt sie zerplatzen. Ein Sniper zielt auf das nähere der beiden Ziele
+— auch auf die Kopie.
 
 **Tank im Detail:** Die Panzerung fängt einen Treffer von *jeder* Bombe ab. Trifft
 sich der Tank selbst, wird zuerst der Schild gegen eigene Bomben verbraucht, dann die
@@ -124,13 +215,42 @@ der Gegner gerade gefallen, passiert beim Drücken nichts.
 
 ## Steuerung
 
-| | Bewegen | Bombe | Fatality |
-|---|---|---|---|
-| **Lokal** — Spieler 1 | `W` `A` `S` `D` | `Space` | `X` |
-| **Lokal** — Spieler 2 | Pfeiltasten | `Enter` | rechte `Shift` |
-| **Online** | `WASD` oder Pfeiltasten | `Space` oder `Enter` | `X` |
+| | Bewegen | Bombe | Fähigkeit (Decoy) | Fatality |
+|---|---|---|---|---|
+| **Lokal** — Spieler 1 | `W` `A` `S` `D` | `Space` | `E` | `X` |
+| **Lokal** — Spieler 2 | Pfeiltasten | `Enter` | `.` oder rechte `Strg` | rechte `Shift` |
+| **Online** | `WASD` oder Pfeiltasten | `Space` oder `Enter` | `E` oder `.` | `X` |
+
+Die Tasten sind nach ihrer Position belegt, nicht nach der Beschriftung — auf einer deutschen
+Tastatur liegen sie also an denselben Stellen. Auf Touch-Geräten erscheint für Decoy ein
+dritter Knopf (◎) mit Abklingzeit.
 
 Die Oberfläche des Spiels ist komplett auf Englisch.
+
+## Verbindungsabbrüche
+
+Handys verlieren ständig kurz die Verbindung — App wechseln, um den Raumcode zu teilen,
+Bildschirm sperren, WLAN wechselt auf mobile Daten. Deshalb beendet ein Abbruch das Match
+nicht mehr:
+
+- Wer die Verbindung verliert, **behält seinen Platz**: im Match 30 Sekunden, in der Lobby
+  3 Minuten (Zeit genug, den Code per Nachricht zu schicken).
+- Das Match **pausiert** solange; der andere sieht „Player 2 lost connection“ mit den
+  verbleibenden Sekunden.
+- Das Handy **verbindet sich selbst neu** und weist sich mit einem geheimen Token aus, das
+  pro Browser-Tab gespeichert ist — auch wenn iOS den Tab im Hintergrund neu geladen hat.
+  Weiter geht es mit einem 3-2-1.
+- Kommt eine neue Verbindung, bevor der Server die alte als tot erkannt hat, gewinnt die
+  neue.
+- Der Server schickt alle 20 Sekunden einen Ping. Das hält Proxys davon ab, stille
+  Verbindungen (Lobby, Ergebnis) zu kappen, und findet Verbindungen, die lautlos gestorben
+  sind.
+- Wer bewusst geht (Hauptmenü, Abbrechen), meldet das dem Server — dann schließt der Raum
+  sofort.
+- Ein kaputtes WebSocket-Paket kann den Server nicht mehr zum Absturz bringen.
+
+Die Wartezeiten lassen sich per Umgebungsvariable ändern: `RECONNECT_GRACE_MS`,
+`LOBBY_GRACE_MS`, `HEARTBEAT_MS`.
 
 ## Handy und iPad
 
@@ -193,7 +313,8 @@ grid1v1/
 │   ├── main.js        # Menü, Klassenwahl, Render-Loop, lokal + online
 │   ├── render.js      # Canvas-Zeichnung inkl. Bewegungsglättung
 │   ├── input.js       # Tastatur: Druck und gehaltene Richtung, getrennt gemeldet
-│   ├── touch.js       # Touch-Steuerung: D-Pad, Bombe, Fatality, Tischmodus
+│   ├── touch.js       # Touch-Steuerung: D-Pad, Bombe, Fähigkeit, Fatality, Tischmodus
+│   ├── palette.js     # die sechs Spielerfarben (für Canvas und CSS)
 │   ├── manifest.webmanifest, icons/  # „Zum Home-Bildschirm" als App
 │   └── net.js         # WebSocket-Wrapper
 ├── server.js          # Statische Dateien + Räume + autoritative Simulation
@@ -232,7 +353,11 @@ Tank-Panzerung und ihr Stapeln, Kettenreaktionen, Sieg und Unentschieden. Runden
 Countdown, eingefrorenes Rundenende, Neustart auf den Startfeldern mit
 wiederhergestellten Kisten, unentschiedene Runden und das Matchende. Dazu 500 zufällige Spielfelder (symmetrisch, freie Startpunkte, nie
 geteilt, verschiedene Größen) und wie Mauern und Kisten Bewegung, Feuer und Sniper
-beeinflussen. Die älteren Regeltests laufen auf einem leeren Feld
+beeinflussen. Außerdem die neuen Klassen (Quickfuse-Zündschnur, X-Muster, Line-Richtung
+und -Reichweite, Shade verschwinden/leiser Schritt/aufgedeckt/Ansicht ohne Position,
+Decoy spiegeln/blockieren/Abklingzeit/zerplatzen/Sniper-Ziel), 2v2 (Teams, Rundenende erst
+bei ausgelöschtem Team, gemeinsame Leben und Serie, Eigenbeschuss, Team-Fatality),
+Namen und Farben, die Match-Statistik und die Killcam-Pause. Die älteren Regeltests laufen auf einem leeren Feld
 (`obstacles: false`, `countdownMs: 0`), damit weder ein Zufallsfeld noch der
 Countdown sie stört.
 
@@ -241,7 +366,25 @@ npm start          # in einem Terminal
 npm run test:online
 ```
 
-Fährt einen echten Match über zwei WebSocket-Clients: Raum anlegen, beitreten,
+```bash
+npm run test:reconnect
+```
+
+Startet einen eigenen Server mit kurzen Wartezeiten und prüft Verbindungsabbrüche:
+Abbruch mitten im Match und Rückkehr per Token, Pause und 3-2-1, veraltete Verbindung,
+abgelaufene Wartezeit, bewusstes Verlassen, Host verlässt kurz die Lobby, falsches Token,
+Heartbeat und ein kaputtes Paket.
+
+```bash
+npm run test:teams
+```
+
+Startet ebenfalls einen eigenen Server und spielt 2v2 mit vier Clients: Lobby, Farbkonflikt,
+Platzwechsel, fünfter Spieler abgewiesen, nur der Host startet, Teams und Namen im Match, ein
+versteckter Shade (Teamkollege sieht ihn, Gegner bekommen keine Position), Decoy übers Netz,
+Verbindungsabbruch und Rückkehr, Lobby verlassen, und Namen/Farben im 1v1.
+
+`npm run test:online` fährt einen echten Match über zwei WebSocket-Clients: Raum anlegen, beitreten,
 Klassenwahl, Spielfeld vom Server (gleich für beide, symmetrisch, neu bei der
 Revanche), Countdown und Rundenwechsel, Tippen und Halten, Sniper-Schuss, Zündschnur in Spielzeit, einen Tank,
 der sich Treffer für Treffer selbst besiegt, Spielende, Revanche und
@@ -251,7 +394,10 @@ läuft deshalb auch auf einem ausgelasteten Rechner stabil.
 ## Bekannte Grenzen
 
 - Räume liegen **im Speicher** — ein Serverneustart beendet laufende Matches.
-- Verlässt ein Spieler den Raum, wird der Raum geschlossen; eine Revanche ist nur
-  möglich, solange beide verbunden sind.
+- Verlässt ein Spieler ein laufendes Match, wird der Raum geschlossen; eine Revanche ist
+  nur möglich, solange alle verbunden sind.
 - Kein Lag-Ausgleich. Auf hohe Latenz reagiert die eigene Figur spürbar verzögert.
-- Nur Tastatursteuerung, also aktuell kein Touch-Support.
+- 2v2 gibt es nur online — vier Spieler an einer Tastatur blockieren sich gegenseitig die
+  Tasten.
+- Welche Figur ein Decoy ist, steht in den Netzwerkdaten (anders als beim Shade). Im Bild
+  sind beide gleich; wer die Rohdaten mitliest, könnte es sehen.

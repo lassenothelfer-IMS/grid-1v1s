@@ -41,17 +41,17 @@
       <div class="touch-host touch-far" id="touch-0"></div>
 
       <aside class="side side-left">
-        <section class="pcard" id="card-0" data-player="0"></section>
-        <section class="relics">
-          <div class="kicker">Shields</div>
-          <div class="relic-row" id="shields-0"></div>
-        </section>
+        <div class="team" id="team-0"></div>
         <p class="epitaph">“Your own fire forgives you once.”</p>
       </aside>
 
       <main class="arena">
         <div class="board-wrap">
           <canvas id="board" width="360" height="480"></canvas>
+          <div class="cam" id="cam" aria-live="polite" hidden>
+            <div class="cam-bar top"><span class="cam-rec">Kill cam</span><span class="cam-speed">0.4×</span></div>
+            <div class="cam-bar bottom" id="cam-caption"></div>
+          </div>
           <div class="streak" id="streak" aria-live="polite" hidden>
             <div class="streak-name" id="streak-name"></div>
             <div class="streak-count" id="streak-count"></div>
@@ -66,11 +66,7 @@
       </main>
 
       <aside class="side side-right">
-        <section class="pcard" id="card-1" data-player="1"></section>
-        <section class="relics">
-          <div class="kicker">Shields</div>
-          <div class="relic-row" id="shields-1"></div>
-        </section>
+        <div class="team" id="team-1"></div>
         <section class="codex">
           <div class="kicker">Controls</div>
           <div class="codex-list" id="legend"></div>

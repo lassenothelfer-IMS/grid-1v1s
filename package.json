@@ -9,7 +9,9 @@
     "start": "node server.js",
     "dev": "node server.js",
     "test": "node test/engine.test.mjs",
-    "test:online": "node test/online.test.mjs"
+    "test:online": "node test/online.test.mjs",
+    "test:reconnect": "node test/reconnect.test.mjs",
+    "test:teams": "node test/teams.test.mjs"
   },
   "engines": {
     "node": "22.x"

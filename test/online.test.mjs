@@ -261,10 +261,16 @@ check("rematch keeps the chosen classes",
   JSON.stringify(fresh?.players.map((p) => p.className)));
 
 console.log("disconnect");
+// A connection that just drops keeps its seat for a grace period…
+const beforeDrop = host.inbox.length;
 guest.socket.close();
-const ended = await host.expect("ended");
-check("remaining player is told the room closed", !!ended, JSON.stringify(ended));
-
+const lost = await host.expect("opponent-lost", 3000);
+check("a dropped connection keeps its seat for a while", !!lost && lost.slot === 1, JSON.stringify(lost));
+check("…instead of closing the room at once",
+  !host.inbox.slice(beforeDrop).some((m) => m.type === "ended"));
+// …while leaving on purpose closes the room straight away.
+host.send({ type: "leave" });
+await wait(200);
 host.socket.close();
 await wait(100);
 
