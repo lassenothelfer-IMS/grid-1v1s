@@ -214,7 +214,7 @@ function classTags(stats) {
   if (stats.pattern === "line") tags.push({ text: "Full line", key: true });
   else if (stats.pattern === "x") tags.push({ text: "X · radius " + stats.blastRadius, key: true });
   else tags.push({ text: "Radius " + stats.blastRadius });
-  if (stats.fuseMs) tags.push({ text: stats.fuseMs / 1000 + " s fuse", key: true });
+  if (stats.fuseMs) tags.push({ text: +(stats.fuseMs / 1000).toFixed(2) + " s fuse", key: true });
   if (stats.delivery === "remote") tags.push({ text: "Range " + stats.minRange + "+", key: true });
   if (stats.shields > 0) tags.push({ text: 1 + stats.shields + " hits", key: true });
   if (stats.stealth) tags.push({ text: "Vanishes", key: true });
@@ -282,7 +282,7 @@ function showMenu(error) {
     el("div", { className: "kicker" }, "Grid 1v1"),
     el("h2", {}, "New duel"),
     el("p", { className: "lede" },
-      "Bombs go off after 1.5 seconds. Your own bombs only cost you a life on the second hit."),
+      "Bombs go off after 1 second. Your own bombs only cost you a life on the second hit."),
     ...(typeof error === "string" ? [el("p", { className: "error" }, error)] : []),
     el("div", { className: "menu-list" }, [
       menuItem("01", "Play vs bots", "Solo · 1v1 or 2v2", () => showModePicker({

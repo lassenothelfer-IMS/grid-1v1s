@@ -101,7 +101,7 @@ export const MOVE_COOLDOWN_MS = 80;
 // slightly early still lands instead of being swallowed.
 export const MOVE_BUFFER_MS = 160;
 
-export const BOMB_FUSE_MS = 1500;      // the 1.5s the game is built around
+export const BOMB_FUSE_MS = 1000;      // every bomb's fuse, unless its class says otherwise
 export const BLAST_DURATION_MS = 350;  // how long fire stays lethal on a tile
 // --- rounds ------------------------------------------------------------------
 //
@@ -184,12 +184,12 @@ export const CLASSES = {
   quickfuse: {
     id: "quickfuse",
     name: "Quickfuse",
-    blurb: "Fuses burn in 0.8 s instead of 1.5 — but the blast only reaches 1 square.",
+    blurb: "Fuses burn in 0.53 s instead of 1 — but the blast only reaches 1 square.",
     maxBombs: 3,
     blastRadius: 1,
     delivery: "self",
     shields: 0,
-    fuseMs: 800,
+    fuseMs: 533, // the same share of the normal fuse as before: 0.8 of 1.5 s
   },
   diagonal: {
     id: "diagonal",

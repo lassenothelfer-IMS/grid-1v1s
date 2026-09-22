@@ -2,6 +2,7 @@
 // Usage: node server.js  (in another shell), then: node test/online.test.mjs
 
 import WebSocket from "ws";
+import { BOMB_FUSE_MS } from "../shared/constants.js";
 
 const URL = process.env.URL || "ws://localhost:3000";
 
@@ -178,10 +179,10 @@ host.send({ type: "move", dir: "right" });
 await wait(60);
 host.send({ type: "hold", dir: null });
 // Measured in game time: when was it placed, and when was it first gone?
-const placedAt = withBomb.elapsed - (1500 - withBomb.bombs[0].fuse);
+const placedAt = withBomb.elapsed - (BOMB_FUSE_MS - withBomb.bombs[0].fuse);
 const afterBoom = await waitFor(host, (st) => st.bombs.length === 0, 5000);
 const fuseTook = afterBoom ? afterBoom.elapsed - placedAt : NaN;
-check("bomb detonated on schedule (1.5s of game time)", fuseTook >= 1500 && fuseTook <= 1600,
+check("bomb detonated on schedule (1 s of game time)", fuseTook >= BOMB_FUSE_MS && fuseTook <= BOMB_FUSE_MS + 100,
   "fuse took " + Math.round(fuseTook) + "ms");
 
 console.log("match end and rematch (takes ~30s)");

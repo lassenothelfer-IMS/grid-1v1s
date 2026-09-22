@@ -1,6 +1,6 @@
 # Grid 1v1
 
-Zwei Spieler, ein 12×16-Raster, Bomben mit 1,5 Sekunden Zündschnur.
+Zwei Spieler, ein 12×16-Raster, Bomben mit 1 Sekunde Zündschnur.
 Spielbar **lokal an einem Gerät** oder **online über einen Raumcode** — online auch
 als **2v2** mit vier Geräten.
 
@@ -13,7 +13,7 @@ als **2v2** mit vier Geräten.
   läuft man in die noch gehaltene weiter.
 - Ein Druck, der während der kurzen Sperre (80 ms) ankommt, wird **160 ms lang
   gepuffert** und danach ausgeführt. Leicht zu früh getippt geht also nicht verloren.
-- Eine **Bombe** zündet nach **1,5 Sekunden**. Wo sie erscheint und wie weit sie
+- Eine **Bombe** zündet nach **1 Sekunde**. Wo sie erscheint und wie weit sie
   reicht, hängt von der Klasse ab (siehe unten).
 - Die Explosion trifft das Bombenfeld plus den Radius **in jede Richtung** (Kreuzform)
   und bleibt 350 ms lang tödlich — auch für den, der sie gelegt hat.
@@ -192,13 +192,13 @@ wie viel man aushält — nicht die Laufgeschwindigkeit.
 | **Speedy** | 5 | 1 Feld | auf dem eigenen Feld | 1 (eigene Bombe: 2) |
 | **Sniper** | 2 | 2 Felder | auf einem der 8 Felder **um den Gegner** | 1 (eigene Bombe: 2) |
 | **Tank** | 2 | 1 Feld | auf dem eigenen Feld | 2 (eigene Bombe: 3) |
-| **Quickfuse** | 3 | 1 Feld | auf dem eigenen Feld, Zündschnur **0,8 s** | 1 (eigene Bombe: 2) |
+| **Quickfuse** | 3 | 1 Feld | auf dem eigenen Feld, Zündschnur **0,53 s** | 1 (eigene Bombe: 2) |
 | **Diagonal** | 3 | 2 Felder, als **X** | auf dem eigenen Feld | 1 (eigene Bombe: 2) |
 | **Line** | 2 | eine Richtung **bis zum Rand** | auf dem eigenen Feld | 1 (eigene Bombe: 2) |
 | **Shade** | 2 | 2 Felder | auf dem eigenen Feld; wird unsichtbar | 1 (eigene Bombe: 2) |
 | **Decoy** | 2 | 2 Felder | auf dem eigenen Feld; Fähigkeit: Köder | 1 (eigene Bombe: 2) |
 
-**Quickfuse im Detail:** Die Bombe zündet schon nach 0,8 Sekunden, der Ring um die Bombe läuft
+**Quickfuse im Detail:** Die Bombe zündet schon nach 0,53 Sekunden (dasselbe Verhältnis zur normalen Zündschnur wie früher 0,8 zu 1,5), der Ring um die Bombe läuft
 entsprechend schneller ab. Dafür reicht das Feuer nur ein Feld weit.
 
 **Diagonal im Detail:** Das Feuer geht in die vier Diagonalen statt geradeaus — gerade neben

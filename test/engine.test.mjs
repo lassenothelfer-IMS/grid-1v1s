@@ -169,19 +169,25 @@ requestBomb(g, 0);
 step(g, 16);
 check("no second bomb on the same tile", g.bombs.length === 1);
 run(g, BOMB_FUSE_MS - 200);
-check("still ticking before 1.5s", g.bombs.length === 1 && g.blasts.length === 0);
+check("still ticking just before the fuse runs out", g.bombs.length === 1 && g.blasts.length === 0);
 run(g, 300);
-check("detonates at 1.5s", g.bombs.length === 0 && g.blasts.length > 0);
+check("detonates when it does", g.bombs.length === 0 && g.blasts.length > 0);
 
 console.log("bomb limits per class");
+// Tries to lay 7 bombs in a row; returns the most that were live at once.
+// (The fuse is short enough that the first ones go off along the way.)
 function bombsAfterSpam(className) {
   const s = createGame({ classes: [className, "classic"] });
+  s.players[0].invulnIn = 999999;
+  let peak = [];
   for (let i = 0; i < 7; i += 1) {
     requestBomb(s, 0);
     step(s, 16);
+    const mine = s.bombs.filter((b) => b.owner === 0);
+    if (mine.length > peak.length) peak = mine;
     tap(s, 0, "down");
   }
-  return s.bombs.filter((b) => b.owner === 0);
+  return peak;
 }
 const classicBombs = bombsAfterSpam("classic");
 const speedyBombs = bombsAfterSpam("speedy");
@@ -743,18 +749,21 @@ console.log("quickfuse");
 g = createGame({ classes: ["quickfuse", "classic"] });
 requestBomb(g, 0);
 step(g, 16);
-check("a quickfuse bomb gets a 0.8 s fuse and a 1-square radius",
-  g.bombs[0].fuseMax === 800 && g.bombs[0].radius === 1, JSON.stringify(g.bombs[0]));
+const QUICK = CLASSES.quickfuse.fuseMs;
+check("a quickfuse bomb gets its short fuse and a 1-square radius",
+  g.bombs[0].fuseMax === QUICK && g.bombs[0].radius === 1, JSON.stringify(g.bombs[0]));
+check("…in the same proportion to the normal fuse as 0.8 s was to 1.5 s",
+  Math.abs(QUICK / BOMB_FUSE_MS - 0.8 / 1.5) < 0.005, QUICK + " of " + BOMB_FUSE_MS);
 tap(g, 0, "right");
-run(g, 800 - 16 - 48 - MOVE_COOLDOWN_MS - 40);
-check("…still ticking just before 0.8 s", g.bombs.length === 1);
+run(g, QUICK - 16 - 48 - MOVE_COOLDOWN_MS - 40);
+check("…still ticking just before it runs out", g.bombs.length === 1);
 run(g, 80);
 check("…and gone right after", g.bombs.length === 0 && g.blasts.length > 0);
 {
   const c = createGame();
   requestBomb(c, 0);
   step(c, 16);
-  check("other classes keep the 1.5 s fuse", c.bombs[0].fuseMax === BOMB_FUSE_MS);
+  check("every other bomb burns for 1 second", BOMB_FUSE_MS === 1000 && c.bombs[0].fuseMax === BOMB_FUSE_MS);
 }
 
 console.log("diagonal");
