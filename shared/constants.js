@@ -6,7 +6,7 @@ export const ROWS = 16;
 
 // Bumped whenever the messages or the game state change shape. A page and a
 // server from different versions then say so, instead of half-working.
-export const PROTOCOL = 2;
+export const PROTOCOL = 3;
 
 // Spawn pockets: player 0 at the top notch, player 1 at the bottom notch.
 export const SPAWNS = [

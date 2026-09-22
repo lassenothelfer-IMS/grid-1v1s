@@ -817,6 +817,10 @@ input[type="text"].name-field:focus { border-color: rgba(var(--pc-rgb), 0.55); }
 }
 .lobby-seat .hint { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--bone-muted); text-align: right; }
 .lobby-seat.empty .lobby-name { color: var(--bone-muted); font-weight: 500; }
+/* The host's extra button beside a seat: put a bot in, or take it out. */
+.lobby-slot { display: flex; gap: 6px; }
+.lobby-slot > .lobby-seat { flex: 1; min-width: 0; }
+.lobby-bot { flex: none; padding: 0 12px; letter-spacing: 0.12em; }
 
 /* After-match numbers */
 .stats-wrap { overflow-x: auto; }

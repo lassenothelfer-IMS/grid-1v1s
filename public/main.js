@@ -10,7 +10,17 @@ import {
   requestAbility,
   requestFatality,
   fatalityReady,
+  viewFor,
 } from "/shared/engine.js";
+import {
+  createBot,
+  handsFor,
+  botNames,
+  randomClass,
+  BOT_LEVELS,
+  BOT_LEVEL_IDS,
+  DEFAULT_BOT_LEVEL,
+} from "/shared/bot.js";
 import {
   PROTOCOL,
   SELF_SHIELDS,
@@ -93,6 +103,10 @@ const session = {
   lost: new Map(),    // seat -> when its grace runs out, while that player is gone
   lobby: null,        // the latest 2v2 lobby, until the match starts
   cam: null,          // the kill cam while it plays
+  solo: null,         // playing against bots: { players, mode, format, level } to play it again
+  bots: [],           // { bot, hands } for every seat a bot plays in solo
+  soloFormat: "duel",
+  botLevel: DEFAULT_BOT_LEVEL,
 };
 
 // Your seat in an online room — code and secret token — kept per browser tab,
@@ -151,9 +165,12 @@ const leadOf = (state, team) => state.players.find((p) => p.team === team);
 const teamName = (state, team) => state.players.filter((p) => p.team === team).map((p) => p.name).join(" & ");
 const streakWord = (state) => (isTeams(state) ? " round streak" : " kill streak");
 
-// Is this seat played from this screen? (Both are, in local play.)
-const controls = (index) => session.mode !== "online" || index === session.slot;
-const keysFor = (index) => (session.mode === "online" ? KEY_LABELS.online : KEY_LABELS.local[index] || KEY_LABELS.local[0]);
+// The one seat played from this screen — online, or solo against bots — or
+// -1 when two people share the screen and the keyboard.
+const mySeat = () => (session.mode === "online" ? session.slot : session.solo ? 0 : -1);
+// Is this seat played from this screen? (Both are, in two-player local play.)
+const controls = (index) => mySeat() === -1 || index === mySeat();
+const keysFor = (index) => (mySeat() !== -1 ? KEY_LABELS.online : KEY_LABELS.local[index] || KEY_LABELS.local[0]);
 const shortKey = (label) => label.split(" / ")[0];
 const fatalityKeyOf = (index) => (touchMode ? "✠" : shortKey(keysFor(index).fatality));
 
@@ -217,6 +234,8 @@ function leaveSession() {
   stopCam();
   session.lost.clear();
   session.lobby = null;
+  session.solo = null;
+  session.bots = [];
   clearSeat();
   const link = session.socket;
   session.socket = null;
@@ -266,17 +285,22 @@ function showMenu(error) {
       "Bombs go off after 1.5 seconds. Your own bombs only cost you a life on the second hit."),
     ...(typeof error === "string" ? [el("p", { className: "error" }, error)] : []),
     el("div", { className: "menu-list" }, [
-      menuItem("01", "Local", "1 device", () => showModePicker({
-        online: false,
+      menuItem("01", "Play vs bots", "Solo · 1v1 or 2v2", () => showModePicker({
+        kind: "solo",
+        onBack: () => showMenu(),
+        onPick: (mode) => pickSoloClass(mode),
+      })),
+      menuItem("02", "Local", "2 players · 1 device", () => showModePicker({
+        kind: "local",
         onBack: () => showMenu(),
         onPick: (mode) => pickLocalClasses(mode),
       })),
-      menuItem("02", "Create room", "Online · 1v1 or 2v2", () => showModePicker({
-        online: true,
+      menuItem("03", "Create room", "Online · 1v1 or 2v2", () => showModePicker({
+        kind: "online",
         onBack: () => showMenu(),
         onPick: (mode) => pickHostClass(mode),
       })),
-      menuItem("03", "Join room", "Online", () => showJoinForm()),
+      menuItem("04", "Join room", "Online", () => showJoinForm()),
     ]),
   ]);
 }
@@ -299,7 +323,8 @@ function segmented(label, choices, current, onChange) {
   ]);
 }
 
-function showModePicker({ online, onPick, onBack }) {
+// kind: "solo" (against bots), "local" (two players, one screen) or "online".
+function showModePicker({ kind, onPick, onBack }) {
   const cards = MODE_IDS.map((id, i) => {
     const mode = MODES[id];
     const rounds = 2 * mode.lives - 1;
@@ -319,10 +344,17 @@ function showModePicker({ online, onPick, onBack }) {
     ]);
   });
 
-  if (!online) session.format = "duel"; // 2v2 needs four devices
+  const formats = FORMAT_IDS.map((id) => [id, FORMATS[id].name]);
   const options = [
-    ...(online
-      ? [segmented("Format", FORMAT_IDS.map((id) => [id, FORMATS[id].name]), session.format, (v) => { session.format = v; })]
+    ...(kind === "online"
+      ? [segmented("Format", formats, session.format, (v) => { session.format = v; })]
+      : []),
+    ...(kind === "solo"
+      ? [
+        segmented("Format", formats, session.soloFormat, (v) => { session.soloFormat = v; }),
+        segmented("Bots", BOT_LEVEL_IDS.map((id) => [id, BOT_LEVELS[id].name]), session.botLevel,
+          (v) => { session.botLevel = v; }),
+      ]
       : []),
     segmented("Kill cam", [["on", "On"], ["off", "Off"]], session.killCam ? "on" : "off",
       (v) => { session.killCam = v === "on"; }),
@@ -435,7 +467,7 @@ function pickLocalClasses(mode = session.gameMode) {
     profile: localProfiles[0],
     who: "Player 1",
     local: true,
-    onBack: () => showModePicker({ online: false, onBack: () => showMenu(), onPick: (m) => pickLocalClasses(m) }),
+    onBack: () => showModePicker({ kind: "local", onBack: () => showMenu(), onPick: (m) => pickLocalClasses(m) }),
     onPick: (first) =>
       showClassPicker({
         profile: localProfiles[1],
@@ -448,10 +480,18 @@ function pickLocalClasses(mode = session.gameMode) {
   });
 }
 
+function pickSoloClass(mode = session.gameMode) {
+  showClassPicker({
+    profile: onlineProfile,
+    onBack: () => showModePicker({ kind: "solo", onBack: () => showMenu(), onPick: (m) => pickSoloClass(m) }),
+    onPick: (className) => startSolo(className, mode),
+  });
+}
+
 function pickHostClass(mode) {
   showClassPicker({
     profile: onlineProfile,
-    onBack: () => showModePicker({ online: true, onBack: () => showMenu(), onPick: (m) => pickHostClass(m) }),
+    onBack: () => showModePicker({ kind: "online", onBack: () => showMenu(), onPick: (m) => pickHostClass(m) }),
     onPick: (className) => startOnlineHost(className, mode),
   });
 }
@@ -533,6 +573,48 @@ function startLocal(classes, mode) {
   enterMatch(MODES[gameMode].name + " · Local duel", [["Local"], ["1 device"]]);
   setLegend(legendRowsFor([0, 1], chosen));
 }
+
+// --- solo, against bots ------------------------------------------------------
+//
+// You play seat 0 — in 2v2 with a bot beside you. The engine runs here, as in
+// local play; each bot is handed only what its seat may see, and the board is
+// drawn from your seat, so a hidden Shade stays hidden on either side.
+
+function startSolo(className, mode, again = null) {
+  const format = again ? again.format : session.soloFormat;
+  const level = again ? again.level : session.botLevel;
+  const count = FORMATS[format].players;
+  const players = again ? again.players : [
+    { className, name: onlineProfile.name, color: onlineProfile.color },
+    ...botNames(count - 1).map((name) => ({ className: randomClass(), name, color: null })),
+  ];
+  leaveSession();
+  session.mode = "local";
+  session.solo = { players, mode, format, level };
+  session.classes = players.map((p) => p.className);
+  session.gameMode = mode;
+  session.format = format;
+  session.state = createGame({ format, mode, killCam: session.killCam, players });
+  session.bots = players.slice(1).map((_, i) => ({ bot: createBot(i + 1, level), hands: handsFor(session.state, i + 1) }));
+  setViewer({ index: 0, team: 0 });
+
+  const handlers = {
+    onMove: (_slot, dir) => requestMove(session.state, 0, dir),
+    onHold: (_slot, dir) => setHeld(session.state, 0, dir),
+    onBomb: () => requestBomb(session.state, 0),
+    onAbility: () => requestAbility(session.state, 0),
+    onFatality: () => requestFatality(session.state, 0),
+  };
+  session.input = createInput(ONLINE_SCHEMES, handlers);
+  if (touchMode) mountPad(0, touchHosts[1], false, handlers);
+  app.classList.toggle("teams", format === "teams");
+  const vs = FORMATS[format].name + " vs " + BOT_LEVELS[level].name.toLowerCase() + " bots";
+  enterMatch(MODES[mode].name + " · " + vs, [["Solo"], [vs]]);
+  setLegend(legendRowsFor([0], session.classes));
+}
+
+// What this screen shows: the whole state, or in solo only what seat 0 may see.
+const shownState = () => (session.solo && session.state ? viewFor(session.state, 0) : session.state);
 
 // --- online mode ------------------------------------------------------------
 
@@ -669,21 +751,39 @@ function showLobby(lobby) {
   const me = lobby.slot;
   const isHost = lobby.host === me;
   const full = lobby.seats.every((s) => s && s.connected);
+  const send = (message) => session.socket?.send(message);
   const seatRow = (i) => {
     const seat = lobby.seats[i];
     if (!seat) {
-      return el("button", { className: "lobby-seat empty", onclick: () => session.socket?.send({ type: "seat", to: i }) }, [
+      const sit = el("button", { className: "lobby-seat empty", onclick: () => send({ type: "seat", to: i }) }, [
         el("span", { className: "orb hollow" }),
         el("span", { className: "lobby-name" }, "Open seat"),
         el("span", { className: "hint" }, "Sit here"),
       ]);
+      if (!isHost) return sit;
+      return el("div", { className: "lobby-slot" }, [
+        sit,
+        el("button", { className: "lobby-bot", title: "Put a bot in this seat",
+          onclick: () => send({ type: "addBot", to: i, level: session.botLevel }) }, "+ Bot"),
+      ]);
     }
-    const tags = [statsOf(seat.className).name, i === me ? "You" : "", i === lobby.host ? "Host" : "", seat.connected ? "" : "Away"];
-    return painted(el("div", { className: "lobby-seat" + (seat.connected ? "" : " away") + (i === me ? " me" : "") }, [
+    const tags = [
+      statsOf(seat.className).name,
+      seat.bot ? BOT_LEVELS[seat.bot].name + " bot" : "",
+      i === me ? "You" : "",
+      i === lobby.host ? "Host" : "",
+      seat.connected ? "" : "Away",
+    ];
+    const row = painted(el("div", { className: "lobby-seat" + (seat.connected ? "" : " away") + (i === me ? " me" : "") }, [
       el("span", { className: "orb" }),
       el("span", { className: "lobby-name" }, seat.name),
       el("span", { className: "hint" }, tags.filter(Boolean).join(" · ")),
     ]), seat.color);
+    if (!(isHost && seat.bot)) return row;
+    return el("div", { className: "lobby-slot" }, [
+      row,
+      el("button", { className: "lobby-bot", title: "Take the bot out", onclick: () => send({ type: "removeBot", to: i }) }, "✕"),
+    ]);
   };
   showPanel([
     el("div", { className: "kicker" }, "Room " + lobby.code + " · 2v2 · " + MODES[lobby.mode].name),
@@ -695,6 +795,10 @@ function showLobby(lobby) {
       seatRow(team),
       seatRow(team + 2),
     ]))),
+    ...(isHost
+      ? [segmented("New bots", BOT_LEVEL_IDS.map((id) => [id, BOT_LEVELS[id].name]), session.botLevel,
+        (v) => { session.botLevel = v; })]
+      : []),
     isHost
       ? el("button", { className: "primary", disabled: !full, onclick: () => session.socket?.send({ type: "start" }) },
         full ? "Start match" : "Waiting for 4 players")
@@ -775,6 +879,9 @@ function handleServerMessage(message) {
         el("h2", {}, "Waiting for an opponent"),
         el("p", { className: "lede" }, "Share this code — the game starts as soon as they join."),
         el("div", { className: "code" }, session.code || ""),
+        el("div", { className: "kicker" }, "Or play a bot right now"),
+        el("div", { className: "row" }, BOT_LEVEL_IDS.map((id) =>
+          el("button", { onclick: () => session.socket?.send({ type: "addBot", level: id }) }, BOT_LEVELS[id].name))),
         el("button", { onclick: () => showMenu() }, "Cancel"),
       ]);
       break;
@@ -827,8 +934,8 @@ function enterMatch(mode, statusParts) {
 
 function resultTitle(state) {
   if (state.winner === null) return "Draw";
-  if (session.mode === "online") {
-    return state.winner === teamOfIndex(session.slot) ? "You win" : "You lose";
+  if (mySeat() !== -1) {
+    return state.winner === teamOfIndex(mySeat()) ? "You win" : "You lose";
   }
   return teamName(state, state.winner) + (isTeams(state) ? " win" : " wins");
 }
@@ -869,7 +976,9 @@ function statsTable(state) {
 
 function showResult(state) {
   const again =
-    session.mode === "local"
+    session.solo
+      ? el("button", { className: "primary", onclick: () => startSolo(null, session.solo.mode, session.solo) }, "Play again")
+      : session.mode === "local"
       ? el("button", { className: "primary", onclick: () => startLocal(session.classes, session.gameMode) }, "Play again")
       : el(
           "button",
@@ -895,7 +1004,9 @@ function showResult(state) {
     el("div", { className: "rule-h" }),
     el("div", { className: "result-actions" }, [
       again,
-      ...(session.mode === "local"
+      ...(session.solo
+        ? [el("button", { onclick: () => pickSoloClass(session.gameMode) }, "New bots")]
+        : session.mode === "local"
         ? [el("button", { onclick: () => pickLocalClasses(session.gameMode) }, "Change classes")]
         : []),
       el("button", { onclick: () => showMenu() }, "Main menu"),
@@ -942,7 +1053,7 @@ function relicRow(player) {
 
 function playerCard(player, state, { compact, streakText = "" }) {
   const stats = statsOf(player.className);
-  const isMe = session.mode === "online" && player.index === session.slot;
+  const isMe = player.index === mySeat();
   const down = compact && !player.alive && state.phase === "live";
   // What matters most comes first: on a narrow card the end gets cut off.
   const sub = [stats.name, player.hidden ? "Unseen" : "", down ? "Down" : "", isMe ? "You" : ""].filter(Boolean).join(" · ");
@@ -1008,7 +1119,7 @@ function renderTeam(target, team, state) {
 // ability if there is one, and the fatality — locked until a 4 streak, lit
 // when it can be used right now.
 function renderAbilities(state) {
-  const mine = session.mode === "online" ? [session.slot] : [0, 1];
+  const mine = mySeat() !== -1 ? [mySeat()] : [0, 1];
   const slots = mine.map((index) => {
     const player = state.players[index];
     if (!player) return null;
@@ -1308,8 +1419,8 @@ let lastStreaks = [0, 0]; // per team
 // The quick banner when a streak reaches 2, 3, 4…
 function flashStreak(state, team, streak) {
   const lead = leadOf(state, team);
-  const mine = session.mode !== "online" || team === teamOfIndex(session.slot);
-  const key = fatalityKeyOf(session.mode === "online" ? session.slot : lead.index);
+  const mine = mySeat() === -1 || team === teamOfIndex(mySeat());
+  const key = fatalityKeyOf(mySeat() !== -1 ? mySeat() : lead.index);
   streakName.textContent = isTeams(state) ? teamName(state, team) : lead.name;
   streakCount.textContent = streak + streakWord(state);
   streakNote.textContent =
@@ -1466,7 +1577,7 @@ function watchForKillCam(state, now) {
   if (frames.length < 2) return;
 
   Object.assign(camView, createView({ replay: true }));
-  camView.viewer = session.mode === "online" ? { index: session.slot, team: teamOfIndex(session.slot) } : null;
+  camView.viewer = mySeat() !== -1 ? { index: mySeat(), team: teamOfIndex(mySeat()) } : null;
   camView.mark = { x: kill.x, y: kill.y, color: colorOf(kill.victim) };
   session.cam = { frames, from, to: kill.at + CAM_TAIL_MS, startedAt: now, round: state.round, status: state.status };
   camCaption.replaceChildren(...camCaptionFor(state, kill));
@@ -1540,10 +1651,11 @@ function frame(now) {
 
   // Only local mode advances the simulation here; online mode renders snapshots.
   if (session.mode === "local" && session.state && session.state.status === "playing") {
+    for (const [i, { bot, hands }] of session.bots.entries()) bot.update(viewFor(session.state, i + 1), dt, hands);
     step(session.state, dt);
   }
 
-  const state = session.state;
+  const state = shownState();
   if (state) {
     recordFrame(state);
     watchForKillCam(state, now);

@@ -221,6 +221,60 @@ console.log("1v1 rooms carry names and colours too");
   guest.socket.close();
 }
 
+console.log("bots in online rooms");
+{
+  const host = client("host");
+  await host.ready;
+  host.send({ type: "create", className: "classic", name: "Solo" });
+  await host.expect("joined");
+  await host.expect("waiting");
+  host.send({ type: "addBot", level: "hard" });
+  const start = await host.expect("start");
+  check("a 1v1 host can fill the empty seat with a bot — the match starts", !!start);
+  const live = await waitFor(host, (s) => s.phase === "live", 6000);
+  const botName = live?.players[1].name;
+  check("the bot gets its own name and colour", !!botName && botName !== "Player 2" &&
+    live.players[1].color !== live.players[0].color, botName);
+  const from = live && { x: live.players[1].x, y: live.players[1].y };
+  const moved = await waitFor(host, (s) => s.players[1].x !== from.x || s.players[1].y !== from.y || s.bombs.length > 0, 5000);
+  check("…and it plays: it moves or bombs on its own", !!moved);
+  host.send({ type: "leave" });
+  host.socket.close();
+}
+{
+  const host = client("host");
+  await host.ready;
+  host.send({ type: "create", format: "teams", className: "classic" });
+  const joined = await host.expect("joined");
+  const guest = client("guest");
+  await guest.ready;
+  guest.send({ type: "join", code: joined.code, className: "tank" });
+  await guest.expect("joined");
+  await waitLobby(host, (l) => l.seats.filter(Boolean).length === 2);
+  guest.send({ type: "addBot", to: 2, level: "easy" });
+  await wait(300);
+  check("only the host can add bots", host.lastOf("lobby").seats[2] === null);
+  host.send({ type: "addBot", to: 2, level: "easy" });
+  host.send({ type: "addBot", to: 3, level: "hard" });
+  const withBots = await waitLobby(host, (l) => l.seats.every(Boolean));
+  check("the host fills the 2v2 seats with bots", withBots?.seats[2]?.bot === "easy" && withBots.seats[3]?.bot === "hard");
+  check("…and a full lobby of people and bots is ready to start", withBots?.seats.every((s) => s.connected));
+  host.send({ type: "removeBot", to: 3 });
+  const removed = await waitLobby(host, (l) => l.seats[3] === null);
+  check("…and can take a bot out again", removed?.seats[3] === null);
+  host.send({ type: "removeBot", to: 1 });
+  await wait(200);
+  check("a person can't be removed as if they were a bot", host.lastOf("lobby").seats[1]?.name === "Player 2");
+  host.send({ type: "addBot", to: 3, level: "medium" });
+  await waitLobby(host, (l) => l.seats.every(Boolean));
+  host.send({ type: "start" });
+  const st = await waitFor(guest, (s) => s.players.length === 4 && s.phase === "live", 8000);
+  check("a 2v2 with two bots starts and goes live", !!st);
+  host.send({ type: "leave" });
+  host.socket.close();
+  guest.socket.close();
+}
+
 server.kill();
 console.log("");
 console.log(failures === 0 ? "ALL CHECKS PASSED" : failures + " CHECK(S) FAILED");

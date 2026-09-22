@@ -11,7 +11,8 @@
     "test": "node test/engine.test.mjs",
     "test:online": "node test/online.test.mjs",
     "test:reconnect": "node test/reconnect.test.mjs",
-    "test:teams": "node test/teams.test.mjs"
+    "test:teams": "node test/teams.test.mjs",
+    "test:bots": "node test/bot.test.mjs"
   },
   "engines": {
     "node": "22.x"

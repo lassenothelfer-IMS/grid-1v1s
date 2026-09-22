@@ -84,6 +84,33 @@ Online können vier Leute in zwei Teams spielen — jeder auf seinem eigenen Ger
 - Verliert jemand die Verbindung, pausiert das Match für alle, wie im 1v1. Verlässt ein Gast
   die Lobby, wird nur sein Platz frei; verlässt jemand ein laufendes Match, endet es.
 
+## Bots
+
+Gegen den Computer spielen — allein oder als Lückenfüller online.
+
+- **Solo:** Im Menü „Play vs bots“, dann Format (**1v1** oder **2v2** — dann mit einem Bot
+  als Teamkollegen), Schwierigkeit (**Easy**, **Medium**, **Hard**), Killcam und Modus. Die Bots
+  bekommen Namen, freie Farben und zufällige Klassen. „Play again“ spielt gegen dieselben
+  Bots, „New bots“ würfelt neue aus.
+- **Online:** Wer einen 1v1-Raum erstellt, kann statt auf einen Gegner zu warten sofort einen
+  Bot auf den freien Platz setzen. In der 2v2-Lobby hat der Host neben jedem freien Platz
+  „+ Bot“ (Schwierigkeit unter „New bots“) und neben jedem Bot ein ✕, um ihn wieder
+  herauszunehmen. Online laufen die Bots auf dem Server.
+- **Fair:** Ein Bot sieht nur, was ein Mensch auf seinem Platz sehen dürfte — ein versteckter
+  Shade täuscht ihn genauso, und einen Decoy hält er für echt. Er drückt dieselben „Tasten“
+  wie ein Spieler (Schritt, Bombe, Fähigkeit, Fatality) und kann nicht schneller laufen, als
+  die Regeln erlauben. Deshalb ist Shade im Solo-Modus freigeschaltet.
+- **Wie er denkt:** Für jedes Feld berechnet der Bot, wann dort Feuer brennen wird — von allen
+  Bomben auf dem Feld, Kettenreaktionen eingeschlossen. Wege sucht er Schritt für Schritt in
+  der Zeit und betritt nie ein Feld, während es brennt. Er legt nur eine Bombe, wenn sie einen
+  Gegner treffen (oder eine Kiste auf dem Weg öffnen) würde **und** er danach noch einen
+  sicheren Fluchtweg hat. Hard stellt zusätzlich Fallen: Bomben, die dem Gegner jeden Ausweg
+  nehmen. Sniper halten Abstand, Line-Bots richten sich auf einen Gegner aus, Decoy-Bots
+  setzen ihren Köder, wenn jemand nah ist, und jeder Bot nimmt eine angebotene Fatality.
+- **Die Stufen** unterscheiden sich in Reaktionszeit (Easy 0,42 s, Medium 0,22 s, Hard 0,11 s),
+  Laufgeschwindigkeit, Sicherheitsabstand zum Feuer und Angriffslust; Easy übersieht auch mal
+  eine Gefahr. Die Werte stehen in `shared/bot.js`.
+
 ## Namen und Farben
 
 Über den Klassenkarten stehen ein **Namensfeld** und **sechs Farben** (Ember, Violet, Jade,
@@ -306,6 +333,7 @@ Spielinformationen ersetzt: Klassenwerte, Schilde, freie Bomben und ein Ereignis
 ```
 grid1v1/
 ├── shared/            # Spielregeln — identisch für Browser und Server
+│   ├── bot.js         # Computergegner (Feuervorhersage, Wegsuche in der Zeit, Stufen)
 │   ├── constants.js   # Feldgröße, Timings, Klassen-Werte
 │   └── engine.js      # reine Logik: createGame / step / requestMove / setHeld / requestBomb
 ├── public/            # Client
@@ -376,13 +404,24 @@ abgelaufene Wartezeit, bewusstes Verlassen, Host verlässt kurz die Lobby, falsc
 Heartbeat und ein kaputtes Paket.
 
 ```bash
+npm run test:bots
+```
+
+Lässt Bots headless ganze Matches spielen: Ein Hard-Bot findet und besiegt auf echten
+Spielfeldern einen Gegner, der stillsteht (mit jeder Klasse), Medium und Hard entkommen einer
+Bombe direkt unter ihnen, die Stufen schlagen sich in der erwarteten Reihenfolge, Hard gegen
+Hard kämpft ohne sich selbst in die Luft zu jagen, vier Bots spielen ein 2v2 zu Ende, und eine
+angebotene Fatality wird genommen.
+
+```bash
 npm run test:teams
 ```
 
 Startet ebenfalls einen eigenen Server und spielt 2v2 mit vier Clients: Lobby, Farbkonflikt,
 Platzwechsel, fünfter Spieler abgewiesen, nur der Host startet, Teams und Namen im Match, ein
 versteckter Shade (Teamkollege sieht ihn, Gegner bekommen keine Position), Decoy übers Netz,
-Verbindungsabbruch und Rückkehr, Lobby verlassen, und Namen/Farben im 1v1.
+Verbindungsabbruch und Rückkehr, Lobby verlassen, Namen/Farben im 1v1 sowie Bots in Online-Räumen
+(1v1 mit Bot starten, Bots in der 2v2-Lobby setzen und entfernen, nur durch den Host).
 
 `npm run test:online` fährt einen echten Match über zwei WebSocket-Clients: Raum anlegen, beitreten,
 Klassenwahl, Spielfeld vom Server (gleich für beide, symmetrisch, neu bei der

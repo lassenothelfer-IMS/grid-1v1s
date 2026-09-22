@@ -468,6 +468,25 @@ function armsOf(bomb) {
   return DIR_VECTORS;
 }
 
+// Every square one bomb's fire would burn on the board as it is now, its own
+// square first: the arms stop dead at a wall, and burn a crate's square but
+// go no further. Chain reactions are not followed — see explode.
+export function fireSquares(state, bomb) {
+  const squares = [{ x: bomb.x, y: bomb.y }];
+  for (const { dx, dy } of armsOf(bomb)) {
+    for (let r = 1; r <= bomb.radius; r += 1) {
+      const x = bomb.x + dx * r;
+      const y = bomb.y + dy * r;
+      if (!inBounds(x, y)) break;
+      const tile = tileAt(state, x, y);
+      if (tile === TILE_WALL) break;
+      squares.push({ x, y });
+      if (tile !== TILE_FLOOR) break;
+    }
+  }
+  return squares;
+}
+
 // Detonates `bomb` and anything its fire reaches, chain-reaction style, and
 // returns every square it burned with whose fire it was.
 // Each bomb uses its own shape, radius and owner, so a Speedy bomb stays small
@@ -487,26 +506,18 @@ function explode(state, bomb) {
     spent.add(current);
 
     state.events.push({ type: "explosion", x: current.x, y: current.y, owner: current.owner });
-    addBlast(state, current.x, current.y, current.owner, true);
-    burned.push({ x: current.x, y: current.y, owner: current.owner });
-
-    for (const { dx, dy } of armsOf(current)) {
-      for (let r = 1; r <= current.radius; r += 1) {
-        const nx = current.x + dx * r;
-        const ny = current.y + dy * r;
-        if (!inBounds(nx, ny)) break;
-        const tile = tileAt(state, nx, ny);
-        if (tile === TILE_WALL) break;
-        addBlast(state, nx, ny, current.owner);
-        burned.push({ x: nx, y: ny, owner: current.owner });
-        if (tile !== TILE_FLOOR) {
-          if (!broken.has(tile)) broken.set(tile, current.owner);
-          break;
-        }
-        const neighbour = bombAt(state, nx, ny);
-        if (neighbour && !spent.has(neighbour)) queue.push(neighbour);
+    fireSquares(state, current).forEach(({ x, y }, i) => {
+      addBlast(state, x, y, current.owner, i === 0);
+      burned.push({ x, y, owner: current.owner });
+      if (i === 0) return;
+      const tile = tileAt(state, x, y);
+      if (tile !== TILE_FLOOR) {
+        if (!broken.has(tile)) broken.set(tile, current.owner);
+        return;
       }
-    }
+      const neighbour = bombAt(state, x, y);
+      if (neighbour && !spent.has(neighbour)) queue.push(neighbour);
+    });
   }
 
   state.bombs = state.bombs.filter((b) => !spent.has(b));

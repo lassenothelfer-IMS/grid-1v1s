@@ -34,6 +34,7 @@ import {
   cleanName,
   defaultName,
 } from "./shared/constants.js";
+import { createBot, handsFor, botNames, randomClass, safeBotLevel } from "./shared/bot.js";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(ROOT, "public");
@@ -105,7 +106,8 @@ const httpServer = createServer(async (req, res) => {
 //
 // 1v1 starts as soon as both seats are filled. 2v2 waits in a lobby, where
 // players can swap to an empty seat (and so pick their team) until the host
-// starts the match.
+// starts the match. Before a match the host can also put a bot in any empty
+// seat; bots play inside the match loop and never disconnect.
 
 const RECONNECT_GRACE_MS = Number(process.env.RECONNECT_GRACE_MS || 30000); // in a match
 const LOBBY_GRACE_MS = Number(process.env.LOBBY_GRACE_MS || 180000);        // before it starts
@@ -149,11 +151,12 @@ function createRoom(format) {
   const room = {
     code: makeCode(),
     format,
-    seats: new Array(FORMATS[format].players).fill(null), // { token, socket, name, color, className, dropTimer }
+    seats: new Array(FORMATS[format].players).fill(null), // { token, socket, name, color, className, dropTimer, bot }
     host: null,           // the creator's seat
     mode: DEFAULT_MODE,   // chosen by the host; everyone plays the host's mode
     killCam: true,
     game: null,
+    bots: [],             // { index, bot, hands } for the seats bots play, while a match runs
     loop: null,
     lastTick: 0,
     backlog: 0,
@@ -164,7 +167,7 @@ function createRoom(format) {
 }
 
 const nameAt = (room, index) => (room.seats[index] && room.seats[index].name) || defaultName(index);
-const allSeated = (room) => room.seats.every((seat) => seat && seat.socket);
+const allSeated = (room) => room.seats.every((seat) => seat && (seat.socket || seat.bot));
 
 // A colour nobody else in the room has: the one asked for, else the seat's
 // default, else the first free one.
@@ -186,6 +189,23 @@ function sitDown(room, index, socket, msg) {
   };
   room.seats[index] = seat;
   seat.color = freeColor(room, msg.color, index, seat);
+  return seat;
+}
+
+// A bot for an empty seat: a name nobody has, a free colour, a random class.
+function seatBot(room, index, level) {
+  const taken = room.seats.filter(Boolean).map((s) => s.name);
+  const seat = {
+    token: null,
+    socket: null,
+    bot: safeBotLevel(level),
+    name: botNames(1, taken)[0] || "Bot",
+    color: null,
+    className: randomClass(),
+    dropTimer: null,
+  };
+  room.seats[index] = seat;
+  seat.color = freeColor(room, null, index, seat);
   return seat;
 }
 
@@ -211,7 +231,8 @@ function sendLobby(room) {
     name: nameAt(room, index),
     color: seat.color,
     className: seat.className,
-    connected: Boolean(seat.socket),
+    connected: Boolean(seat.socket || seat.bot),
+    bot: seat.bot || null,
   });
   room.seats.forEach((seat, index) => {
     if (!seat) return;
@@ -245,6 +266,7 @@ function runLoop(room) {
     room.lastTick = now;
 
     while (room.backlog >= TICK_MS && room.game.status !== "over") {
+      for (const { index, bot, hands } of room.bots) bot.update(viewFor(room.game, index), TICK_MS, hands);
       step(room.game, TICK_MS);
       room.backlog -= TICK_MS;
       room.sinceSnapshot += TICK_MS;
@@ -270,6 +292,9 @@ function startMatch(room) {
     killCam: room.killCam,
     players: room.seats.map((seat) => ({ className: seat.className, name: seat.name, color: seat.color })),
   });
+  room.bots = room.seats
+    .map((seat, index) => seat.bot && { index, bot: createBot(index, seat.bot), hands: handsFor(room.game, index) })
+    .filter(Boolean);
   broadcast(room, {
     type: "start",
     classes: room.seats.map((seat) => seat.className),
@@ -458,6 +483,18 @@ wss.on("connection", (socket) => {
     }
 
     if (!room || !seat) return;
+
+    // --- bots, before a match: the host fills or empties seats ---
+    if (!room.game && seat === room.host && (msg.type === "addBot" || msg.type === "removeBot")) {
+      const to = Number.isInteger(msg.to) ? msg.to : room.seats.indexOf(null);
+      if (to < 0 || to >= room.seats.length) return;
+      if (msg.type === "addBot" && room.seats[to] === null) seatBot(room, to, msg.level);
+      else if (msg.type === "removeBot" && room.seats[to] && room.seats[to].bot) room.seats[to] = null;
+      else return;
+      if (room.format === "duel" && allSeated(room)) startMatch(room);
+      else if (room.format === "teams") sendLobby(room);
+      return;
+    }
 
     // --- the 2v2 lobby ---
     if (!room.game && room.format === "teams") {
