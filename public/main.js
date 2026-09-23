@@ -38,13 +38,12 @@ import {
   NAME_MAX,
   cleanName,
   defaultName,
-  teamOfIndex,
   STREAK_SHOWN_FROM,
   FATALITY_STREAK,
   FATALITY_RANGE,
   FATALITY_ANYWHERE_STREAK,
 } from "/shared/constants.js";
-import { draw, fitCanvas, resetMotion, setViewer, createView } from "/render.js";
+import { draw, fitCanvas, resetMotion, setViewer, setAim, createView } from "/render.js";
 import { createInput, LOCAL_SCHEMES, ONLINE_SCHEMES, KEY_LABELS } from "/input.js";
 import { connect } from "/net.js";
 import { isTouchDevice, createTouchPad } from "/touch.js";
@@ -85,6 +84,12 @@ if (touchMode) {
   document.addEventListener("gesturestart", (event) => event.preventDefault());
 }
 
+// Where each seat on this screen is aiming, as a board square: the mouse, or
+// a thumb dragged from the bomb button. On a shared screen the mouse belongs
+// to player 1 and each touch strip aims for its own player.
+const aims = new Map();
+let lastAimed = 0; // whose aim the board shows
+
 const session = {
   mode: null,      // null | "local" | "online"
   state: null,     // the game state being rendered
@@ -93,6 +98,7 @@ const session = {
   format: DEFAULT_FORMAT, // "duel" (1v1) | "teams" (2v2, online only)
   killCam: true,
   input: null,
+  handlers: null,     // what a key, a click or a thumb ends up calling
   socket: null,
   slot: -1,
   code: null,
@@ -158,6 +164,11 @@ const FATALITY_SHOW_MS = 2600; // the fatality plays out before the result card
 
 // --- who is who -------------------------------------------------------------
 
+// Which side a seat plays for: in 1v1 and 2v2 two teams, in a free-for-all
+// one per player.
+const teamOf = (index) => (session.state && session.state.players[index]
+  ? session.state.players[index].team
+  : index % 2);
 const nameOf = (index) => (session.state && session.state.players[index] && session.state.players[index].name) || defaultName(index);
 const colorOf = (index) => (session.state && session.state.players[index] && session.state.players[index].color) || DEFAULT_COLORS[index];
 const isTeams = (state) => Boolean(state && state.format === "teams");
@@ -173,6 +184,45 @@ const controls = (index) => mySeat() === -1 || index === mySeat();
 const keysFor = (index) => (mySeat() !== -1 ? KEY_LABELS.online : KEY_LABELS.local[index] || KEY_LABELS.local[0]);
 const shortKey = (label) => label.split(" / ")[0];
 const fatalityKeyOf = (index) => (touchMode ? "✠" : shortKey(keysFor(index).fatality));
+
+const mouseSeat = () => (mySeat() === -1 ? 0 : mySeat());
+const aimFor = (slot) => aims.get(slot) || null;
+function aimAt(slot, square) {
+  if (square) aims.set(slot, square);
+  else aims.delete(slot);
+  lastAimed = slot;
+}
+
+// The board square a pointer event is over, or null if it missed the board.
+function squareAt(event) {
+  const state = session.state;
+  if (!state) return null;
+  const box = canvas.getBoundingClientRect();
+  const cell = Math.min(box.width / state.cols, box.height / state.rows);
+  const x = Math.floor((event.clientX - box.left - (box.width - cell * state.cols) / 2) / cell);
+  const y = Math.floor((event.clientY - box.top - (box.height - cell * state.rows) / 2) / cell);
+  if (x < 0 || y < 0 || x >= state.cols || y >= state.rows) return null;
+  return { x, y };
+}
+
+canvas.addEventListener("pointermove", (event) => {
+  if (event.pointerType === "touch") return;
+  aimAt(mouseSeat(), squareAt(event));
+});
+canvas.addEventListener("pointerleave", (event) => {
+  if (event.pointerType !== "touch") aimAt(mouseSeat(), null);
+});
+canvas.addEventListener("pointerdown", (event) => {
+  if (event.pointerType === "touch" || !session.input) return;
+  const square = squareAt(event);
+  if (!square) return;
+  event.preventDefault();
+  const seat = mouseSeat();
+  aimAt(seat, square);
+  if (event.button === 2) session.handlers?.onAbility?.(seat, square);
+  else if (event.button === 0) session.handlers?.onBomb?.(seat, square);
+});
+canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
 // --- small DOM helpers ------------------------------------------------------
 
@@ -249,7 +299,7 @@ function leaveSession() {
   session.code = null;
   session.overShown = false;
   session.overAt = 0;
-  app.classList.remove("in-match", "teams");
+  app.classList.remove("in-match", "teams", "wide-board");
   roomLabel.hidden = true;
   modeLabel.textContent = "A duel on the grid";
   setLegend([]);
@@ -345,13 +395,15 @@ function showModePicker({ kind, onPick, onBack }) {
   });
 
   const formats = FORMAT_IDS.map((id) => [id, FORMATS[id].name]);
+  const chosen = kind === "solo" ? session.soloFormat : session.format;
+  const again = () => showModePicker({ kind, onPick, onBack });
   const options = [
     ...(kind === "online"
-      ? [segmented("Format", formats, session.format, (v) => { session.format = v; })]
+      ? [segmented("Format", formats, session.format, (v) => { session.format = v; again(); })]
       : []),
     ...(kind === "solo"
       ? [
-        segmented("Format", formats, session.soloFormat, (v) => { session.soloFormat = v; }),
+        segmented("Format", formats, session.soloFormat, (v) => { session.soloFormat = v; again(); }),
         segmented("Bots", BOT_LEVEL_IDS.map((id) => [id, BOT_LEVELS[id].name]), session.botLevel,
           (v) => { session.botLevel = v; }),
       ]
@@ -360,14 +412,32 @@ function showModePicker({ kind, onPick, onBack }) {
       (v) => { session.killCam = v === "on"; }),
   ];
 
+  // A free-for-all has no lives to choose: one life a round, points to win.
+  const royale = chosen === "royale";
+  const royaleCard = el("button", { className: "slot-card", onclick: () => onPick(DEFAULT_MODE) }, [
+    el("div", { className: "slot-top" }, [
+      el("span", { className: "kicker" }, "Free-for-all"),
+      el("span", { className: "slot-glyph", "aria-hidden": "true" }, "✺"),
+    ]),
+    el("div", { className: "slot-name" }, "Last one standing"),
+    el("div", { className: "slot-desc" },
+      "Up to six players on a board four times the size, and a wall of fire that closes in. " +
+      "One life a round; you score for how long you last."),
+    el("div", { className: "tags" }, [
+      el("span", { className: "tag key" }, "3–6 players"),
+      el("span", { className: "tag" }, "25 × 25"),
+      el("span", { className: "tag" }, "Fire wall"),
+    ]),
+  ]);
+
   showPanel([
     el("div", { className: "panel-head" }, [
-      el("h2", {}, "Choose a mode"),
-      el("span", { className: "kicker" }, "How many lives the duel runs on"),
+      el("h2", {}, royale ? "Free-for-all" : "Choose a mode"),
+      el("span", { className: "kicker" }, royale ? "Everyone for themselves" : "How many lives the duel runs on"),
     ]),
     el("div", { className: "rule-h" }),
     el("div", { className: "options" }, options),
-    el("div", { className: "loadout modes" }, cards),
+    el("div", { className: "loadout modes" }, royale ? [royaleCard] : cards),
     el("div", {}, [el("button", { onclick: onBack }, "Back")]),
   ], { wide: "mid" });
 }
@@ -532,10 +602,17 @@ function showJoinForm(error) {
 function legendRowsFor(indices, classes) {
   return indices.flatMap((i) => {
     const keys = keysFor(i);
+    const stats = statsOf(classes[i]);
+    const thrown = stats.delivery === "remote" ? "Aim and shoot"
+      : stats.pattern === "line" ? "Aim the lane"
+      : "Throw bomb";
     return [
       { player: i, key: keys.move, what: "Move" },
-      { player: i, key: keys.bomb, what: "Bomb" },
-      ...(statsOf(classes[i]).ability ? [{ player: i, key: keys.ability, what: "Decoy" }] : []),
+      ...(i === mouseSeat() ? [{ player: i, key: touchMode ? "Drag ◉" : "Click", what: thrown }] : []),
+      { player: i, key: keys.bomb, what: "Bomb at your feet" },
+      ...(stats.ability ? [{ player: i, key: keys.ability, what: "Decoy" }] : []),
+      ...(statsOf(classes[i]).ability && i === mouseSeat() && !touchMode
+        ? [{ player: i, key: "Right click", what: "Decoy there" }] : []),
       { player: i, key: keys.fatality, what: "Fatality" },
     ];
   });
@@ -559,10 +636,11 @@ function startLocal(classes, mode) {
   const handlers = {
     onMove: (slot, dir) => requestMove(session.state, slot, dir),
     onHold: (slot, dir) => setHeld(session.state, slot, dir),
-    onBomb: (slot) => requestBomb(session.state, slot),
-    onAbility: (slot) => requestAbility(session.state, slot),
+    onBomb: (slot, aim = aimFor(slot)) => requestBomb(session.state, slot, aim),
+    onAbility: (slot, aim = aimFor(slot)) => requestAbility(session.state, slot, aim),
     onFatality: (slot) => requestFatality(session.state, slot),
   };
+  session.handlers = handlers;
   session.input = createInput(LOCAL_SCHEMES, handlers);
   // Table mode: each player's controls on their own edge, player 1's facing them.
   if (touchMode) {
@@ -588,6 +666,7 @@ function startSolo(className, mode, again = null) {
     { className, name: onlineProfile.name, color: onlineProfile.color },
     ...botNames(count - 1).map((name) => ({ className: randomClass(), name, color: null })),
   ];
+  const shape = FORMATS[format];
   leaveSession();
   session.mode = "local";
   session.solo = { players, mode, format, level };
@@ -601,15 +680,17 @@ function startSolo(className, mode, again = null) {
   const handlers = {
     onMove: (_slot, dir) => requestMove(session.state, 0, dir),
     onHold: (_slot, dir) => setHeld(session.state, 0, dir),
-    onBomb: () => requestBomb(session.state, 0),
-    onAbility: () => requestAbility(session.state, 0),
+    onBomb: (_slot, aim = aimFor(0)) => requestBomb(session.state, 0, aim),
+    onAbility: (_slot, aim = aimFor(0)) => requestAbility(session.state, 0, aim),
     onFatality: () => requestFatality(session.state, 0),
   };
+  session.handlers = handlers;
   session.input = createInput(ONLINE_SCHEMES, handlers);
   if (touchMode) mountPad(0, touchHosts[1], false, handlers);
   app.classList.toggle("teams", format === "teams");
-  const vs = FORMATS[format].name + " vs " + BOT_LEVELS[level].name.toLowerCase() + " bots";
-  enterMatch(MODES[mode].name + " · " + vs, [["Solo"], [vs]]);
+  app.classList.toggle("wide-board", Boolean(shape.ffa));
+  const vs = shape.name + " vs " + BOT_LEVELS[level].name.toLowerCase() + " bots";
+  enterMatch((shape.ffa ? "" : MODES[mode].name + " · ") + vs, [["Solo"], [vs]]);
   setLegend(legendRowsFor([0], session.classes));
 }
 
@@ -721,7 +802,7 @@ function setupOnlineMatch(message) {
   session.lobby = null;
   boardWrap.classList.remove("quake");
   resetMotion();
-  setViewer({ index: session.slot, team: teamOfIndex(session.slot) });
+  setViewer({ index: session.slot, team: teamOf(session.slot) });
   stopCam();
   camBuffer.length = 0;
   camWatch = null;
@@ -733,15 +814,18 @@ function setupOnlineMatch(message) {
   const handlers = {
     onMove: (_slot, dir) => session.socket?.send({ type: "move", dir }),
     onHold: (_slot, dir) => session.socket?.send({ type: "hold", dir }),
-    onBomb: () => session.socket?.send({ type: "bomb" }),
-    onAbility: () => session.socket?.send({ type: "ability" }),
+    onBomb: (_slot, aim = aimFor(session.slot)) => session.socket?.send({ type: "bomb", aim }),
+    onAbility: (_slot, aim = aimFor(session.slot)) => session.socket?.send({ type: "ability", aim }),
     onFatality: () => session.socket?.send({ type: "fatality" }),
   };
+  session.handlers = handlers;
   session.input = createInput(ONLINE_SCHEMES, handlers);
   if (touchMode) mountPad(session.slot, touchHosts[1], false, handlers);
   const format = FORMATS[session.format].name;
   app.classList.toggle("teams", session.format === "teams");
-  enterMatch(MODES[session.gameMode].name + " · Online " + format, [["Online " + format], ["Room " + (session.code || "")]]);
+  app.classList.toggle("wide-board", Boolean(FORMATS[session.format].ffa));
+  enterMatch((FORMATS[session.format].ffa ? "" : MODES[session.gameMode].name + " · ") + "Online " + format,
+    [["Online " + format], ["Room " + (session.code || "")]]);
   setLegend(legendRowsFor([session.slot], session.classes));
 }
 
@@ -750,7 +834,9 @@ function setupOnlineMatch(message) {
 function showLobby(lobby) {
   const me = lobby.slot;
   const isHost = lobby.host === me;
-  const full = lobby.seats.every((s) => s && s.connected);
+  const crowd = lobby.format === "royale";
+  const seated = lobby.seats.filter((s) => s && s.connected).length;
+  const full = lobby.ready !== undefined ? lobby.ready : lobby.seats.every((s) => s && s.connected);
   const send = (message) => session.socket?.send(message);
   const seatRow = (i) => {
     const seat = lobby.seats[i];
@@ -786,14 +872,19 @@ function showLobby(lobby) {
     ]);
   };
   showPanel([
-    el("div", { className: "kicker" }, "Room " + lobby.code + " · 2v2 · " + MODES[lobby.mode].name),
-    el("h2", {}, full ? "Everyone's here" : "Waiting for players"),
-    el("p", { className: "lede" }, "Share the code. Pick a side by sitting in one of its open seats."),
+    el("div", { className: "kicker" }, "Room " + lobby.code + " · " +
+      (crowd ? "Free-for-all" : "2v2 · " + MODES[lobby.mode].name)),
+    el("h2", {}, full ? (crowd ? seated + " in the arena" : "Everyone's here") : "Waiting for players"),
+    el("p", { className: "lede" }, crowd
+      ? "Share the code. Three or more can start; six can play."
+      : "Share the code. Pick a side by sitting in one of its open seats."),
     el("div", { className: "code" }, lobby.code),
-    el("div", { className: "lobby" }, [0, 1].map((team) => el("div", { className: "lobby-team" }, [
-      el("div", { className: "kicker" }, team === 0 ? "Top side" : "Bottom side"),
-      seatRow(team),
-      seatRow(team + 2),
+    el("div", { className: "lobby" }, [0, 1].map((column) => el("div", { className: "lobby-team" }, [
+      el("div", { className: "kicker" }, crowd ? (column === 0 ? "Fighters" : "\u00a0")
+        : column === 0 ? "Top side" : "Bottom side"),
+      ...(crowd
+        ? lobby.seats.map((_, i) => i).filter((i) => i % 2 === column).map(seatRow)
+        : [seatRow(column), seatRow(column + 2)]),
     ]))),
     ...(isHost
       ? [segmented("New bots", BOT_LEVEL_IDS.map((id) => [id, BOT_LEVELS[id].name]), session.botLevel,
@@ -801,8 +892,9 @@ function showLobby(lobby) {
       : []),
     isHost
       ? el("button", { className: "primary", disabled: !full, onclick: () => session.socket?.send({ type: "start" }) },
-        full ? "Start match" : "Waiting for 4 players")
-      : el("p", { className: "lede" }, full ? "Waiting for the host to start." : "The host starts once all four are in."),
+        full ? "Start match" : crowd ? "Waiting for 3 players" : "Waiting for 4 players")
+      : el("p", { className: "lede" }, full ? "Waiting for the host to start."
+        : crowd ? "The host starts once three are in." : "The host starts once all four are in."),
     el("button", { onclick: () => showMenu() }, "Leave"),
   ], { wide: "mid" });
 }
@@ -935,7 +1027,7 @@ function enterMatch(mode, statusParts) {
 function resultTitle(state) {
   if (state.winner === null) return "Draw";
   if (mySeat() !== -1) {
-    return state.winner === teamOfIndex(mySeat()) ? "You win" : "You lose";
+    return state.winner === teamOf(mySeat()) ? "You win" : "You lose";
   }
   return teamName(state, state.winner) + (isTeams(state) ? " win" : " wins");
 }
@@ -974,6 +1066,18 @@ function statsTable(state) {
   ]);
 }
 
+// Free-for-all: who finished where, and on how many points.
+function standingsTable(state) {
+  const order = [...state.players].sort((a, b) => b.score - a.score);
+  return el("div", { className: "standings" }, order.map((player, place) =>
+    painted(el("div", { className: "standing" + (place === 0 ? " lead" : "") }, [
+      el("span", { className: "place" }, "#" + (place + 1)),
+      el("span", { className: "orb" }),
+      el("span", { className: "lobby-name" }, player.name),
+      el("span", { className: "points" }, player.score + " pts"),
+    ]), player.color)));
+}
+
 function showResult(state) {
   const again =
     session.solo
@@ -1000,6 +1104,7 @@ function showResult(state) {
     el("p", { className: "lede" },
       (fatality ? "By fatality · " + state.finish.streak + streakWord(state) + " · " : "") +
       "Lasted " + formatClock(state.elapsed) + " · " + rounds + (rounds === 1 ? " round" : " rounds")),
+    ...(state.ffa ? [standingsTable(state)] : []),
     statsTable(state),
     el("div", { className: "rule-h" }),
     el("div", { className: "result-actions" }, [
@@ -1085,8 +1190,18 @@ function playerCard(player, state, { compact, streakText = "" }) {
 // One side column: in 1v1 the player's card and shields; in 2v2 the team's
 // shared lives and streak, then a compact card per teammate. Only rebuilt
 // when something on it actually changed.
-function renderTeam(target, team, state) {
-  const members = state.players.filter((p) => p.team === team);
+// Who shows up in this column: a team in 1v1 and 2v2, or half the field in a
+// free-for-all (even seats on the left, odd on the right).
+function columnOf(state, column) {
+  return state.ffa
+    ? state.players.filter((p) => p.index % 2 === column)
+    : state.players.filter((p) => p.team === column);
+}
+
+function renderSide(target, column, state) {
+  if (state.ffa) return renderStandings(target, column, state);
+  const team = column;
+  const members = columnOf(state, column);
   const lead = members[0];
   if (!lead) return;
   const teams = isTeams(state);
@@ -1113,6 +1228,34 @@ function renderTeam(target, team, state) {
     ...(streakText ? [el("div", { className: lead.streak >= FATALITY_STREAK ? "pstreak hot" : "pstreak" }, streakText)] : []),
   ]), lead.color);
   target.replaceChildren(head, ...members.map((p) => playerCard(p, state, { compact: true })));
+}
+
+// Free-for-all: everyone with their points, the leader lit.
+function renderStandings(target, column, state) {
+  const members = columnOf(state, column);
+  const best = Math.max(...state.players.map((p) => p.score));
+  const key = JSON.stringify([state.target, mySeat(), members.map((p) =>
+    [p.name, p.color, p.className, p.alive, p.hidden, p.score, p.score === best])]);
+  if (target.dataset.key === key) return;
+  target.dataset.key = key;
+  target.replaceChildren(...members.map((player) => {
+    const stats = statsOf(player.className);
+    const out = !player.alive && state.phase === "live";
+    const card = el("section", { className: "pcard compact score" + (out ? " down" : "") }, [
+      el("div", { className: "pcard-head" }, [
+        el("div", { className: "orb" }),
+        el("div", { className: "pcard-id" }, [
+          el("div", { className: "pname" }, player.name),
+          el("div", { className: "psub" },
+            [stats.name, player.index === mySeat() ? "You" : "", player.hidden ? "Unseen" : "", out ? "Out" : ""]
+              .filter(Boolean).join(" · ")),
+        ]),
+        el("div", { className: player.score === best && best > 0 ? "points lead" : "points" },
+          String(player.score)),
+      ]),
+    ]);
+    return painted(card, player.color);
+  }));
 }
 
 // Footer slots for each player you control: bombs still free, the class
@@ -1297,6 +1440,13 @@ function formatClock(ms) {
 // --- rounds -------------------------------------------------------------------
 
 const GO_FLASH_MS = 800;
+
+// How long until the fire wall takes another ring of the board.
+function ringNote(state) {
+  if (!state.ring || state.phase !== "live") return "";
+  if (state.ring.inset === 0) return " · fire wall in " + Math.ceil(state.ring.left / 1000) + "s";
+  return " · fire closing (" + Math.ceil(state.ring.left / 1000) + "s)";
+}
 const maxRoundsOf = (state) => 2 * state.maxLives - 1;
 
 // One pip per round the match can last, lit in the colour of the side that
@@ -1419,7 +1569,7 @@ let lastStreaks = [0, 0]; // per team
 // The quick banner when a streak reaches 2, 3, 4…
 function flashStreak(state, team, streak) {
   const lead = leadOf(state, team);
-  const mine = mySeat() === -1 || team === teamOfIndex(mySeat());
+  const mine = mySeat() === -1 || team === teamOf(mySeat());
   const key = fatalityKeyOf(mySeat() !== -1 ? mySeat() : lead.index);
   streakName.textContent = isTeams(state) ? teamName(state, team) : lead.name;
   streakCount.textContent = streak + streakWord(state);
@@ -1484,13 +1634,15 @@ function promptFor(state) {
 
 function updateHud(state) {
   clockEl.textContent = formatClock(state.elapsed);
-  roundLabel.textContent = "Round " + state.round + " of up to " + maxRoundsOf(state);
+  roundLabel.textContent = state.ffa
+    ? "Round " + state.round + " · first to " + state.target + ringNote(state)
+    : "Round " + state.round + " of up to " + maxRoundsOf(state);
   renderPips(state);
   showCallout(calloutFor(state));
   watchStreaks(state);
   setPrompt(session.cam ? null : promptFor(state));
-  renderTeam(teamEls[0], 0, state);
-  renderTeam(teamEls[1], 1, state);
+  renderSide(teamEls[0], 0, state);
+  renderSide(teamEls[1], 1, state);
   renderAbilities(state);
   renderLegend();
   for (const { pad } of session.pads) pad.update(state);
@@ -1577,7 +1729,7 @@ function watchForKillCam(state, now) {
   if (frames.length < 2) return;
 
   Object.assign(camView, createView({ replay: true }));
-  camView.viewer = mySeat() !== -1 ? { index: mySeat(), team: teamOfIndex(mySeat()) } : null;
+  camView.viewer = mySeat() !== -1 ? { index: mySeat(), team: teamOf(mySeat()) } : null;
   camView.mark = { x: kill.x, y: kill.y, color: colorOf(kill.victim) };
   session.cam = { frames, from, to: kill.at + CAM_TAIL_MS, startedAt: now, round: state.round, status: state.status };
   camCaption.replaceChildren(...camCaptionFor(state, kill));
@@ -1608,7 +1760,8 @@ function stopCam() {
 // --- touch controls and keeping the screen on ----------------------------------
 
 function mountPad(player, host, rotated, handlers) {
-  session.pads.push({ player, pad: createTouchPad(host, { player, rotated, handlers }) });
+  const withAim = { ...handlers, onAim: (slot, square) => aimAt(slot, square) };
+  session.pads.push({ player, pad: createTouchPad(host, { player, rotated, handlers: withAim }) });
 }
 
 function unmountPads() {
@@ -1681,6 +1834,10 @@ function frame(now) {
       hidePanel();
     }
   }
+
+  const aiming = state && state.status === "playing" ? aimFor(lastAimed) : null;
+  setAim(aiming && state.players[lastAimed] && state.players[lastAimed].alive
+    ? { index: lastAimed, ...aiming } : null);
 
   const replay = session.cam && camFrame(now);
   if (session.cam && !replay) stopCam();

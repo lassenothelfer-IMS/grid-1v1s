@@ -19,9 +19,10 @@ import {
   ABSORB_GRACE_MS,
   TILE_WALL,
   TILE_FLOOR,
+  TILE_FIRE,
   FATALITY_RANGE,
 } from "/shared/constants.js";
-import { sniperTargets, fatalityReady, classOf } from "/shared/engine.js";
+import { sniperTargets, fatalityReady, classOf, fireSquares, bombPreview } from "/shared/engine.js";
 import { paletteOf } from "/palette.js";
 
 // The template draws on a 64px cell; everything here is expressed as a
@@ -65,6 +66,7 @@ export function createView({ replay = false } = {}) {
   return {
     replay,
     viewer: null,
+    aim: null,              // { index, x, y }: the throw being lined up
     mark: null,             // kill cam: { x, y, color }
     motion: new Map(),      // "p0" / "d0" -> { x, y } in fractional cells
     seen: new Map(),        // "p0" -> "shown" | "ghost" | "gone", for vanish puffs
@@ -93,15 +95,22 @@ export function setViewer(viewer) {
   live.viewer = viewer;
 }
 
+// Where the player on this screen is aiming: { index, x, y } while a pointer
+// is over the board, null otherwise. The board shows the throw before it is
+// taken — the same landing square and blast the engine would work out.
+export function setAim(aim) {
+  live.aim = aim;
+}
+
 // Bounding box of every crate on the board, keyed by crate id.
-function cratesOf(tiles) {
+function cratesOf(tiles, cols) {
   const boxes = new Map();
   if (!tiles) return boxes;
   for (let i = 0; i < tiles.length; i += 1) {
     const id = tiles[i];
     if (id <= 0) continue;
-    const x = i % COLS;
-    const y = Math.floor(i / COLS);
+    const x = i % cols;
+    const y = Math.floor(i / cols);
     const box = boxes.get(id);
     if (!box) boxes.set(id, { x0: x, y0: y, x1: x, y1: y });
     else {
@@ -217,14 +226,18 @@ export function draw(canvas, state, now = performance.now(), view = live) {
 
   const ctx = canvas.getContext("2d");
   const { width, height } = canvas;
-  const cell = Math.min(width / COLS, height / ROWS);
-  const u = cell / T; // one template pixel
-  const offsetX = (width - cell * COLS) / 2;
-  const offsetY = (height - cell * ROWS) / 2;
+  // The board is as big as the state says: 12×16 for a duel, 25×25 for a
+  // free-for-all.
+  const cols = (state && state.cols) || COLS;
+  const rows = (state && state.rows) || ROWS;
+  const cell = Math.min(width / cols, height / rows);
+  const u = (cell / T) * Math.min(1.6, Math.max(1, 12 / cols)); // keep line weights readable on a big board
+  const offsetX = (width - cell * cols) / 2;
+  const offsetY = (height - cell * rows) / 2;
   const px = (cx) => offsetX + cx * cell;
   const py = (cy) => offsetY + cy * cell;
-  const bw = cell * COLS;
-  const bh = cell * ROWS;
+  const bw = cell * cols;
+  const bh = cell * rows;
   const players = state ? state.players : [];
   const colorOf = (index) => (players[index] && players[index].color) || DEFAULT_COLORS[index] || "ember";
   const teamsMatch = Boolean(state && state.format === "teams");
@@ -239,13 +252,13 @@ export function draw(canvas, state, now = performance.now(), view = live) {
   ctx.strokeStyle = "rgba(230,222,210,0.055)";
   ctx.lineWidth = Math.max(1, u);
   ctx.beginPath();
-  for (let c = 1; c < COLS; c += 1) {
+  for (let c = 1; c < cols; c += 1) {
     ctx.moveTo(Math.round(px(c)) + 0.5, py(0));
-    ctx.lineTo(Math.round(px(c)) + 0.5, py(ROWS));
+    ctx.lineTo(Math.round(px(c)) + 0.5, py(rows));
   }
-  for (let r = 1; r < ROWS; r += 1) {
+  for (let r = 1; r < rows; r += 1) {
     ctx.moveTo(px(0), Math.round(py(r)) + 0.5);
-    ctx.lineTo(px(COLS), Math.round(py(r)) + 0.5);
+    ctx.lineTo(px(cols), Math.round(py(r)) + 0.5);
   }
   ctx.stroke();
 
@@ -297,14 +310,15 @@ export function draw(canvas, state, now = performance.now(), view = live) {
   }
 
   const tiles = state.tiles || [];
-  const wallAt = (x, y) => x >= 0 && x < COLS && y >= 0 && y < ROWS && tiles[y * COLS + x] === TILE_WALL;
+  const at = (x, y) => (x >= 0 && x < cols && y >= 0 && y < rows ? tiles[y * cols + x] : TILE_WALL);
+  const wallAt = (x, y) => at(x, y) === TILE_WALL;
 
   // Walls — the template's raised stone: a cool 160° gradient, a lit top edge
   // and a shadowed base. Neighbouring wall squares fuse into one piece, so the
   // edges are only drawn where the piece ends.
-  for (let y = 0; y < ROWS; y += 1) {
-    for (let x = 0; x < COLS; x += 1) {
-      if (tiles[y * COLS + x] !== TILE_WALL) continue;
+  for (let y = 0; y < rows; y += 1) {
+    for (let x = 0; x < cols; x += 1) {
+      if (tiles[y * cols + x] !== TILE_WALL) continue;
       const X = px(x);
       const Y = py(y);
       const stone = ctx.createLinearGradient(X + cell * 0.33, Y, X + cell * 0.67, Y + cell);
@@ -336,7 +350,7 @@ export function draw(canvas, state, now = performance.now(), view = live) {
 
   // Crates — the template's amber reliquaries: one warm box per crate, inset
   // 6px from its squares, with a thin ember rim. Big crates are one big box.
-  const crates = cratesOf(tiles);
+  const crates = cratesOf(tiles, cols);
   for (const box of crates.values()) {
     const inset = 6 * u;
     const X = px(box.x0) + inset;
@@ -358,6 +372,33 @@ export function draw(canvas, state, now = performance.now(), view = live) {
       ctx.moveTo(X + 7 * u, Y + 7 * u);
       ctx.lineTo(X + W - 7 * u, Y + H - 7 * u);
       ctx.stroke();
+    }
+  }
+
+  // Ground the fire wall has taken: scorched, still burning at its edge, and
+  // deadly to stand on.
+  if (state.ring) {
+    const pulse = 0.5 + 0.5 * Math.sin(now / 260);
+    for (let y = 0; y < rows; y += 1) {
+      for (let x = 0; x < cols; x += 1) {
+        if (at(x, y) !== TILE_FIRE) continue;
+        const X = px(x);
+        const Y = py(y);
+        ctx.fillStyle = "rgba(58,10,8,0.85)";
+        ctx.fillRect(X, Y, cell, cell);
+        ctx.fillStyle = `rgba(255,86,32,${(0.1 + 0.07 * pulse).toFixed(3)})`;
+        ctx.fillRect(X, Y, cell, cell);
+        // The edge where it meets the board still has flames on it.
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          if (at(x + dx, y + dy) === TILE_FIRE) continue;
+          const hot = ctx.createLinearGradient(X + (dx > 0 ? cell : 0), Y + (dy > 0 ? cell : 0),
+            X + (dx > 0 ? cell - cell * 0.5 : dx < 0 ? cell * 0.5 : 0), Y + (dy > 0 ? cell - cell * 0.5 : dy < 0 ? cell * 0.5 : 0));
+          hot.addColorStop(0, `rgba(255,150,60,${(0.5 + 0.3 * pulse).toFixed(3)})`);
+          hot.addColorStop(1, "rgba(255,90,30,0)");
+          ctx.fillStyle = hot;
+          ctx.fillRect(X, Y, cell, cell);
+        }
+      }
     }
   }
 
@@ -428,8 +469,8 @@ export function draw(canvas, state, now = performance.now(), view = live) {
     for (let r = 1; r <= bomb.radius; r += 1) {
       const x = bomb.x + v.dx * r;
       const y = bomb.y + v.dy * r;
-      if (x < 0 || x >= COLS || y < 0 || y >= ROWS) break;
-      const tile = tiles[y * COLS + x];
+      if (x < 0 || x >= cols || y < 0 || y >= rows) break;
+      const tile = tiles[y * cols + x];
       if (tile === TILE_WALL) break;
       chevron(ctx, px(x) + cell / 2, py(y) + cell / 2, v, 6 * u);
       ctx.fill();
@@ -437,7 +478,8 @@ export function draw(canvas, state, now = performance.now(), view = live) {
     }
   }
 
-  if (!view.replay) drawAimingAids(ctx, state, now, { cell, u, px, py, colorOf });
+  if (!view.replay) drawAimingAids(ctx, state, now, { cell, u, px, py, cols, rows, colorOf });
+  if (!view.replay && view.aim) drawAim(ctx, state, view.aim, now, { cell, u, px, py, colorOf });
 
   // Blasts — additive bone/ember bloom. The template has a white-hot core, full
   // arms and softer ends, flickering between 72% and 100% every 0.14s.
@@ -760,9 +802,45 @@ export function draw(canvas, state, now = performance.now(), view = live) {
   drawFatality(ctx, state, now, dt, view, { cell, u, px, py, bw, bh, colorOf });
 }
 
+// Where the bomb you are lining up would land, and what it would burn.
+function drawAim(ctx, state, aim, now, { cell, u, px, py, colorOf }) {
+  const player = state.players[aim.index];
+  if (!player || !player.alive || state.phase !== "live") return;
+  const bomb = bombPreview(state, aim.index, aim);
+  const side = sideOf(colorOf(aim.index));
+  const pulse = 0.5 + 0.5 * Math.sin(now / 220);
+  ctx.save();
+  if (!bomb) {
+    // No shot from here: a crossed-out square where the pointer is.
+    ctx.strokeStyle = "rgba(230,222,210,0.3)";
+    ctx.lineWidth = Math.max(1, u);
+    ctx.strokeRect(px(aim.x) + 6 * u, py(aim.y) + 6 * u, cell - 12 * u, cell - 12 * u);
+    ctx.restore();
+    return;
+  }
+  // The squares its fire would take.
+  ctx.fillStyle = side.ring + (0.1 + 0.05 * pulse).toFixed(3) + ")";
+  for (const square of fireSquares(state, bomb)) {
+    ctx.fillRect(px(square.x), py(square.y), cell, cell);
+  }
+  // …and where it would come down.
+  const cx = px(bomb.x) + cell / 2;
+  const cy = py(bomb.y) + cell / 2;
+  ctx.strokeStyle = side.ring + (0.55 + 0.35 * pulse).toFixed(3) + ")";
+  ctx.lineWidth = Math.max(1, 1.6 * u);
+  circle(ctx, cx, cy, cell * 0.3);
+  ctx.stroke();
+  ctx.setLineDash([3 * u, 4 * u]);
+  ctx.beginPath();
+  ctx.moveTo(px(player.x) + cell / 2, py(player.y) + cell / 2);
+  ctx.lineTo(cx, cy);
+  ctx.stroke();
+  ctx.restore();
+}
+
 // The live board's helpers for whoever is playing: a sniper's firing solution
 // and the fatality zone. Never shown in a replay.
-function drawAimingAids(ctx, state, now, { cell, u, px, py, colorOf }) {
+function drawAimingAids(ctx, state, now, { cell, u, px, py, cols, rows, colorOf }) {
   // Sniper firing solution: the dashed "empty slot" outline around the target.
   for (const player of state.players) {
     const targets = sniperTargets(state, player.index);
@@ -814,8 +892,8 @@ function drawAimingAids(ctx, state, now, { cell, u, px, py, colorOf }) {
       } else {
         const x0 = Math.max(0, target.x - FATALITY_RANGE);
         const y0 = Math.max(0, target.y - FATALITY_RANGE);
-        const x1 = Math.min(COLS - 1, target.x + FATALITY_RANGE);
-        const y1 = Math.min(ROWS - 1, target.y + FATALITY_RANGE);
+        const x1 = Math.min(cols - 1, target.x + FATALITY_RANGE);
+        const y1 = Math.min(rows - 1, target.y + FATALITY_RANGE);
         const X = px(x0), Y = py(y0), W = (x1 - x0 + 1) * cell, H = (y1 - y0 + 1) * cell;
         const near = offer === "near";
         ctx.fillStyle = side.ring + (near ? 0.08 + 0.07 * pulse : 0.04).toFixed(3) + ")";

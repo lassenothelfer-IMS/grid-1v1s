@@ -35,8 +35,12 @@ function button(className, label, glyph) {
 }
 
 // Builds one player's control strip inside `host`.
-// handlers: { onMove(player, dir), onHold(player, dir|null), onBomb(player),
-//             onAbility(player), onFatality(player) }
+// The bomb button doubles as the aim: a tap drops a bomb at your feet, and a
+// thumb dragged off it throws — the direction and length of the drag pick the
+// square, the same one the board draws while you hold.
+//
+// handlers: { onMove(player, dir), onHold(player, dir|null), onBomb(player, aim),
+//             onAbility(player, aim), onFatality(player), onAim(player, square) }
 export function createTouchPad(host, { player, rotated, handlers }) {
   const strip = el("div", "touch-strip" + (rotated ? " rotated" : ""));
 
@@ -128,24 +132,76 @@ export function createTouchPad(host, { player, rotated, handlers }) {
   dpad.addEventListener("lostpointercapture", onUp);
 
   // --- buttons: act on touch-down, not on release ------------------------------
+  function flash(node) {
+    node.classList.remove("hit");
+    void node.offsetWidth;
+    node.classList.add("hit");
+  }
   function press(node, action) {
     node.addEventListener("pointerdown", (event) => {
       event.preventDefault();
       action();
-      node.classList.remove("hit");
-      void node.offsetWidth;
-      node.classList.add("hit");
+      flash(node);
     });
   }
-  press(bomb, () => handlers.onBomb(player));
   press(skill, () => handlers.onAbility?.(player));
   press(fatal, () => handlers.onFatality(player));
 
+  // The bomb button: tap to drop at your feet, drag to aim and throw.
+  const PER_SQUARE = 26; // pixels of drag per square of distance
+  let dragFrom = null;
+  let dragAim = null;
+  bomb.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    try {
+      bomb.setPointerCapture(event.pointerId);
+    } catch {
+      /* the tap still counts */
+    }
+    dragFrom = { x: event.clientX, y: event.clientY, id: event.pointerId };
+    dragAim = null;
+  });
+  bomb.addEventListener("pointermove", (event) => {
+    if (!dragFrom || event.pointerId !== dragFrom.id || !standing) return;
+    const dx = event.clientX - dragFrom.x;
+    const dy = event.clientY - dragFrom.y;
+    const far = Math.hypot(dx, dy);
+    if (far < 14) {
+      if (dragAim) {
+        dragAim = null;
+        handlers.onAim?.(player, null);
+      }
+      return;
+    }
+    dragAim = {
+      x: standing.x + Math.round((dx / far) * (far / PER_SQUARE)),
+      y: standing.y + Math.round((dy / far) * (far / PER_SQUARE)),
+    };
+    handlers.onAim?.(player, dragAim);
+  });
+  function throwIt(event) {
+    if (!dragFrom || event.pointerId !== dragFrom.id) return;
+    dragFrom = null;
+    handlers.onBomb(player, dragAim);
+    handlers.onAim?.(player, null);
+    dragAim = null;
+    flash(bomb);
+  }
+  bomb.addEventListener("pointerup", throwIt);
+  bomb.addEventListener("pointercancel", (event) => {
+    if (!dragFrom || event.pointerId !== dragFrom.id) return;
+    dragFrom = null;
+    dragAim = null;
+    handlers.onAim?.(player, null);
+  });
+
   // --- per-frame refresh, only touching the DOM when something changed ---------
   let lastKey = "";
+  let standing = null; // where this player is, for working out a dragged aim
   function update(state) {
     const me = state.players[player];
     if (!me) return;
+    standing = me.alive && me.x !== null ? { x: me.x, y: me.y } : null;
     const stats = classOf(me);
     const offer = fatalityReady(state, player);
     const fatalState = offer === "near" || offer === "anywhere" ? "ready" : me.streak >= FATALITY_STREAK ? "far" : "locked";

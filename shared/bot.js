@@ -10,21 +10,20 @@
 // a pause) at a time, and never enter a square while it burns.
 
 import {
-  COLS,
-  ROWS,
   DIRECTIONS,
   CLASS_IDS,
   BOMB_FUSE_MS,
   BLAST_DURATION_MS,
-  TILE_FLOOR,
-  teamOfIndex,
+  RING_STEP_MS,
+  TILE_WALL,
+  TILE_FIRE,
 } from "./constants.js";
 import {
   classOf,
   tileAt,
   fireSquares,
+  bombPreview,
   fatalityReady,
-  sniperTargets,
   requestMove,
   setHeld,
   requestBomb,
@@ -32,6 +31,8 @@ import {
   requestFatality,
 } from "./engine.js";
 
+// aimError — how far its throws can miss, in squares
+// ringWarn — how long before the fire wall reaches a square it stops using it
 // thinkMs — how often it looks at the board again (its reaction time)
 // stepMs — how fast it walks
 // margin — ms of safety it keeps from fire when planning
@@ -44,17 +45,17 @@ export const BOT_LEVELS = {
   easy: {
     id: "easy", name: "Easy",
     thinkMs: 420, stepMs: 230, margin: 20, aggression: 0.3, sloppy: 0.15, wander: 0.35,
-    traps: false, abilityChance: 0.15, finishChance: 0.25,
+    traps: false, abilityChance: 0.15, finishChance: 0.25, aimError: 1.6, ringWarn: 3600,
   },
   medium: {
     id: "medium", name: "Medium",
     thinkMs: 220, stepMs: 140, margin: 80, aggression: 0.65, sloppy: 0.02, wander: 0.1,
-    traps: false, abilityChance: 0.4, finishChance: 0.7,
+    traps: false, abilityChance: 0.4, finishChance: 0.7, aimError: 0.5, ringWarn: 5200,
   },
   hard: {
     id: "hard", name: "Hard",
     thinkMs: 110, stepMs: 95, margin: 110, aggression: 0.95, sloppy: 0, wander: 0,
-    traps: true, abilityChance: 0.7, finishChance: 1,
+    traps: true, abilityChance: 0.7, finishChance: 1, aimError: 0, ringWarn: 6200,
   },
 };
 export const BOT_LEVEL_IDS = Object.keys(BOT_LEVELS);
@@ -80,8 +81,8 @@ export function handsFor(state, index) {
   return {
     move: (dir) => requestMove(state, index, dir),
     hold: (dir) => setHeld(state, index, dir),
-    bomb: () => requestBomb(state, index),
-    ability: () => requestAbility(state, index),
+    bomb: (aim = null) => requestBomb(state, index, aim),
+    ability: (aim = null) => requestAbility(state, index, aim),
     fatality: () => requestFatality(state, index),
   };
 }
@@ -90,13 +91,30 @@ export function handsFor(state, index) {
 
 const MOVES = Object.entries(DIRECTIONS);
 const WAIT = ["wait", { dx: 0, dy: 0 }];
-const at = (p) => p.y * COLS + p.x;
-const inBounds = (x, y) => x >= 0 && x < COLS && y >= 0 && y < ROWS;
 const ring = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+// Squares are numbered by the board the state carries, not by a fixed size:
+// the free-for-all board is much bigger than the duel one.
+const spot = (state, p) => p.y * state.cols + p.x;
+const onBoard = (state, x, y) => x >= 0 && x < state.cols && y >= 0 && y < state.rows;
 
-// Per square, the [from, to] windows (ms from now) in which it burns.
-function fireWindows(state, extraBombs = []) {
-  const windows = Array.from({ length: COLS * ROWS }, () => []);
+// Per square, the [from, to] windows (ms from now) in which it burns. Ground
+// the fire wall has taken burns for good.
+function fireWindows(state, extraBombs = [], ringWarn = 5000) {
+  const at = (p) => spot(state, p);
+  const windows = Array.from({ length: state.cols * state.rows }, () => []);
+  state.tiles.forEach((tile, i) => { if (tile === TILE_FIRE) windows[i].push([-1, Infinity]); });
+  // The fire wall, as far ahead as this bot looks: ground it is about to take
+  // counts as ground that burns, so the bot backs away before it arrives.
+  if (state.ring) {
+    for (let y = 0; y < state.rows; y += 1) {
+      for (let x = 0; x < state.cols; x += 1) {
+        const rings = Math.min(x, y, state.cols - 1 - x, state.rows - 1 - y);
+        if (rings < state.ring.inset) continue; // already burnt, marked above
+        const due = state.ring.left + (rings - state.ring.inset) * RING_STEP_MS;
+        if (due <= ringWarn) windows[y * state.cols + x].push([due, Infinity]);
+      }
+    }
+  }
   for (const blast of state.blasts) windows[at(blast)].push([-1, blast.ttl]);
   const pending = [...state.bombs, ...extraBombs].map((bomb) => ({ bomb, due: Math.max(0, bomb.fuse) }));
   while (pending.length) {
@@ -120,8 +138,9 @@ const quietFrom = (windows, t, margin) => windows.every(([, e]) => e + margin < 
 // Squares a player cannot walk into: walls, crates, bombs, other players and
 // the enemy's decoys (it cannot tell them from the real thing).
 function blockedGrid(state, me) {
-  const grid = new Uint8Array(COLS * ROWS);
-  for (let i = 0; i < grid.length; i += 1) if (state.tiles[i] !== TILE_FLOOR) grid[i] = 1;
+  const at = (p) => spot(state, p);
+  const grid = new Uint8Array(state.cols * state.rows);
+  for (let i = 0; i < grid.length; i += 1) if (state.tiles[i] === TILE_WALL || state.tiles[i] > 0) grid[i] = 1;
   for (const bomb of state.bombs) grid[at(bomb)] = 1;
   for (const p of state.players) {
     if (p !== me && p.alive && p.x !== null && p.x !== undefined) grid[at(p)] = 1;
@@ -135,7 +154,7 @@ function blockedGrid(state, me) {
 // and a square is never entered while it will burn. Returns the moves ("up",
 // "wait", …) of the quickest way to a square where goal(node, t) holds, or
 // null. node.last is the direction of the step that got there (its facing).
-function route(grid, windows, start, goal, { stepMs, margin, maxSteps = 20 }) {
+function route(board, grid, windows, start, goal, { stepMs, margin, maxSteps = 20 }) {
   let frontier = [{ x: start.x, y: start.y, last: start.facing, parent: null, dir: null }];
   const seen = new Set([start.x + "," + start.y + ",0"]);
   for (let k = 0; k <= maxSteps && frontier.length; k += 1) {
@@ -146,9 +165,9 @@ function route(grid, windows, start, goal, { stepMs, margin, maxSteps = 20 }) {
       for (const [dir, { dx, dy }] of [...MOVES, WAIT]) {
         const x = node.x + dx;
         const y = node.y + dy;
-        if (dir !== "wait" && (!inBounds(x, y) || grid[y * COLS + x])) continue;
+        if (dir !== "wait" && (!onBoard(board, x, y) || grid[y * board.cols + x])) continue;
         const arrive = (k + 1) * stepMs;
-        if (burnsDuring(windows[y * COLS + x], arrive - stepMs / 2, arrive + stepMs, margin)) continue;
+        if (burnsDuring(windows[y * board.cols + x], arrive - stepMs / 2, arrive + stepMs, margin)) continue;
         const key = x + "," + y + "," + (k + 1);
         if (seen.has(key)) continue;
         seen.add(key);
@@ -185,13 +204,15 @@ function think(view, me, level, memory, act) {
   const stats = classOf(me);
   const { margin, stepMs } = level;
   const plan = { stepMs, margin };
-  const windows = fireWindows(view);
+  const at = (p) => spot(view, p);
+  const windows = fireWindows(view, [], level.ringWarn);
   const grid = blockedGrid(view, me);
   const quiet = (node, t) => quietFrom(windows[at(node)], t, margin);
 
-  // 1. Fire is coming here: get to a square it will never reach.
+  // 1. Fire is coming here — a bomb's, or the closing wall's: get to a square
+  //    it will never reach.
   if (!quietFrom(windows[at(me)], 0, margin) && Math.random() >= level.sloppy) {
-    const escape = route(grid, windows, me, quiet, { ...plan, maxSteps: 22 });
+    const escape = route(view, grid, windows, me, quiet, { ...plan, maxSteps: 26 });
     return escape || [MOVES[Math.floor(Math.random() * 4)][0]];
   }
 
@@ -199,7 +220,7 @@ function think(view, me, level, memory, act) {
   for (const e of enemies) if (e.alive && e.x !== null && e.x !== undefined) memory.lastSeen.set(e.index, { x: e.x, y: e.y });
   const targets = [
     ...enemies.filter((p) => p.alive && p.x !== null && p.x !== undefined),
-    ...(view.decoys || []).filter((d) => teamOfIndex(d.owner) !== me.team),
+    ...(view.decoys || []).filter((d) => view.players[d.owner].team !== me.team),
   ];
   const friends = view.players.filter((p) => p.team === me.team && p !== me && p.alive && p.x !== null);
   const nearest = targets.reduce((best, t) => (!best || ring(me, t) < ring(me, best) ? t : best), null);
@@ -214,17 +235,12 @@ function think(view, me, level, memory, act) {
     act.ability();
   }
 
-  // 4. Drop a bomb when it pays — and only with a way out.
+  // 4. Drop or throw a bomb when it pays — and only with a way out.
   const live = view.bombs.filter((b) => b.owner === me.index).length;
   if (live < stats.maxBombs && Math.random() < level.aggression) {
-    if (stats.delivery === "remote") {
-      const cells = sniperTargets(view, me.index);
-      if (cells && cells.length) {
-        act.bomb();
-        return [];
-      }
-    } else if (bombPays(view, me, stats, level, grid, targets, friends, memory)) {
-      act.bomb();
+    const shot = bestShot(view, me, stats, level, grid, targets, friends, memory, nearest);
+    if (shot !== undefined) {
+      act.bomb(shot);
       return []; // next look sees the new bomb and runs
     }
   }
@@ -249,14 +265,14 @@ function think(view, me, level, memory, act) {
       return cache.get(key);
     };
   }
-  const attack = targets.length ? route(grid, windows, me, hunt, { ...plan, maxSteps: 22 }) : null;
+  const attack = targets.length ? route(view, grid, windows, me, hunt, { ...plan, maxSteps: 22 }) : null;
   if (attack) {
     memory.digging = false;
     return attack;
   }
 
   // Nobody within reach: open the way by breaking crates.
-  const dig = route(grid, windows, me, (node, t) => quiet(node, t) &&
+  const dig = route(view, grid, windows, me, (node, t) => quiet(node, t) &&
     fireSquares(view, bombFrom(me, stats, node.x, node.y, node.last)).some((s) => tileAt(view, s.x, s.y) > 0),
   { ...plan, maxSteps: 18 });
   if (dig) {
@@ -266,15 +282,35 @@ function think(view, me, level, memory, act) {
   return amble(view, me, grid, windows, quiet, plan, memory);
 }
 
-// Whether dropping a bomb right here is worth it, and survivable.
-function bombPays(view, me, stats, level, grid, targets, friends, memory) {
-  if (view.bombs.some((b) => b.x === me.x && b.y === me.y)) return false;
-  const bomb = bombFrom(me, stats, me.x, me.y, me.facing);
+// The shot to take, if any: an aim (a square to throw at) or null for "at my
+// feet". Returns undefined when no shot is worth it. Each candidate is judged
+// by the bomb it would really make — the engine works that out — and is only
+// taken if there is still a way out afterwards.
+function bestShot(view, me, stats, level, grid, targets, friends, memory, nearest) {
+  const aims = [null];
+  if (nearest && (stats.throwRange > 0 || stats.delivery === "remote")) {
+    const miss = level.aimError;
+    aims.unshift({
+      x: Math.round(nearest.x + (Math.random() * 2 - 1) * miss),
+      y: Math.round(nearest.y + (Math.random() * 2 - 1) * miss),
+    });
+  }
+  for (const aim of aims) {
+    const bomb = bombPreview(view, me.index, aim);
+    if (!bomb) continue;
+    if (payingShot(view, me, level, grid, targets, friends, memory, bomb)) return aim;
+  }
+  return undefined;
+}
+
+// Whether this exact bomb is worth it, and survivable.
+function payingShot(view, me, level, grid, targets, friends, memory, bomb) {
+  const at = (p) => spot(view, p);
   const squares = fireSquares(view, bomb);
   const burns = (p) => squares.some((s) => s.x === p.x && s.y === p.y);
   if (friends.some(burns)) return false;
 
-  const windows = fireWindows(view, [bomb]);
+  const windows = fireWindows(view, [bomb], level.ringWarn);
   let worth = targets.some(burns) ||
     (memory.digging && squares.some((s) => tileAt(view, s.x, s.y) > 0));
   if (!worth && level.traps) {
@@ -285,25 +321,28 @@ function bombPays(view, me, stats, level, grid, targets, friends, memory) {
       theirs[at(me)] = 1;
       theirs[at(bomb)] = 1;
       theirs[at(target)] = 0;
-      return !route(theirs, windows, { x: target.x, y: target.y, facing: target.facing },
+      return !route(view, theirs, windows, { x: target.x, y: target.y, facing: target.facing },
         (node, t) => quietFrom(windows[at(node)], t, 0), { stepMs: 110, margin: 0, maxSteps: 14 });
     });
   }
   if (!worth) return false;
 
   const mine = grid.slice();
-  mine[at(me)] = 1; // once off our own bomb, we cannot step back on
-  return Boolean(route(mine, windows, me, (node, t) => quietFrom(windows[at(node)], t, level.margin),
+  mine[at(bomb)] = 1; // nobody walks onto a bomb
+  return Boolean(route(view, mine, windows, me, (node, t) => quietFrom(windows[at(node)], t, level.margin),
     { stepMs: level.stepMs, margin: level.margin, maxSteps: 16 }));
 }
 
 // No target in reach: head for where an enemy was last seen, or the middle.
 function amble(view, me, grid, windows, quiet, plan, memory) {
   const seen = [...memory.lastSeen.values()];
-  const spot = seen.length ? seen[Math.floor(Math.random() * seen.length)] : { x: COLS / 2, y: ROWS / 2 };
-  const path = route(grid, windows, me, (node, t) => quiet(node, t) && ring(node, spot) <= 2, { ...plan, maxSteps: 20 });
+  const where = seen.length ? seen[Math.floor(Math.random() * seen.length)]
+    : { x: Math.floor(view.cols / 2), y: Math.floor(view.rows / 2) };
+  const path = route(view, grid, windows, me, (node, t) => quiet(node, t) && ring(node, where) <= 2,
+    { ...plan, maxSteps: 20 });
   if (path) return path.slice(0, 4);
-  const open = MOVES.filter(([, { dx, dy }]) => inBounds(me.x + dx, me.y + dy) && !grid[(me.y + dy) * COLS + me.x + dx]);
+  const open = MOVES.filter(([, { dx, dy }]) => onBoard(view, me.x + dx, me.y + dy) &&
+    !grid[(me.y + dy) * view.cols + me.x + dx]);
   return open.length ? [open[Math.floor(Math.random() * open.length)][0]] : [];
 }
 

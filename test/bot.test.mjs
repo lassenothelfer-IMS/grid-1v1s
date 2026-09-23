@@ -142,6 +142,33 @@ console.log("2v2 with four bots");
   console.log(`    teammates knocked out by their own side: ${friendly}`);
 }
 
+console.log("free-for-all with six bots");
+{
+  let finished = 0;
+  let kills = 0;
+  let deaths = 0;
+  let selfDestructs = 0;
+  let rounds = 0;
+  for (let seed = 80; seed < 83; seed += 1) {
+    const { state } = play({
+      levels: ["hard", "medium", "hard", "medium", "easy", "hard"],
+      format: "royale",
+      seed,
+      maxMs: 420000,
+    });
+    if (state.status === "over") finished += 1;
+    rounds += state.history.length;
+    kills += total(state, "kills");
+    deaths += total(state, "deaths");
+    selfDestructs += total(state, "selfDestructs");
+  }
+  const ring = deaths - kills - selfDestructs;
+  console.log(`    ${finished}/3 matches decided over ${rounds} rounds — ${kills} kills, ${ring} taken by the fire wall`);
+  check("six bots play a free-for-all to a winner", finished === 3, finished + "/3");
+  check("…killing each other along the way", kills >= rounds, kills + " kills in " + rounds + " rounds");
+  check("…and not simply all walking into the fire", ring < deaths / 2, ring + " of " + deaths);
+}
+
 console.log("the finishing move");
 {
   const { state } = play({

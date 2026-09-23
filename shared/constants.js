@@ -6,7 +6,7 @@ export const ROWS = 16;
 
 // Bumped whenever the messages or the game state change shape. A page and a
 // server from different versions then say so, instead of half-working.
-export const PROTOCOL = 3;
+export const PROTOCOL = 4;
 
 // Spawn pockets: player 0 at the top notch, player 1 at the bottom notch.
 export const SPAWNS = [
@@ -26,14 +26,55 @@ export const TEAM_SPAWNS = [
   { x: 3, y: ROWS - 1 },
 ];
 
+// Free-for-all: a much bigger square board, everyone for themselves, and a
+// wall of fire that eats it from the edges. The spawns are ordered so that any
+// number of them — three as well as six — is spread around the board.
+export const ROYALE_COLS = 25;
+export const ROYALE_ROWS = 25;
+export const ROYALE_SPAWNS = [
+  { x: 12, y: 2 },
+  { x: 12, y: 22 },
+  { x: 2, y: 12 },
+  { x: 22, y: 12 },
+  { x: 4, y: 20 },
+  { x: 20, y: 4 },
+];
+
+// players — how many seats; min — the fewest a match can start with
+// symmetry — 2 mirrors the top half into the bottom, 4 turns a quarter around
+// walls / crates — pieces per symmetric region (see generateLayout)
+// ffa — everyone is their own side; ring — the board burns inward from the edges
 export const FORMATS = {
-  duel: { id: "duel", name: "1v1", players: 2, spawns: SPAWNS },
-  teams: { id: "teams", name: "2v2", players: 4, spawns: TEAM_SPAWNS },
+  duel: {
+    id: "duel", name: "1v1", players: 2, min: 2,
+    cols: COLS, rows: ROWS, spawns: SPAWNS, symmetry: 2, walls: [1, 2], crates: [3, 5],
+  },
+  teams: {
+    id: "teams", name: "2v2", players: 4, min: 4,
+    cols: COLS, rows: ROWS, spawns: TEAM_SPAWNS, symmetry: 2, walls: [1, 2], crates: [3, 5],
+  },
+  royale: {
+    id: "royale", name: "Free-for-all", players: 6, min: 3,
+    cols: ROYALE_COLS, rows: ROYALE_ROWS, spawns: ROYALE_SPAWNS, symmetry: 4, walls: [5, 7], crates: [8, 12],
+    ffa: true, ring: true, fatality: false, lives: 1,
+  },
 };
 export const FORMAT_IDS = Object.keys(FORMATS);
 export const DEFAULT_FORMAT = "duel";
 
-export const teamOfIndex = (index) => index % 2;
+// --- the fire wall (free-for-all) ------------------------------------------------
+//
+// Nothing happens for RING_GRACE_MS; then the outermost ring of squares
+// catches fire, and another ring follows every RING_STEP_MS. Fire on the floor
+// stays for the rest of the round: you can walk into it, and it kills you —
+// no shield, no mercy. Crates and walls it reaches simply burn away.
+export const RING_GRACE_MS = 20000;
+export const RING_STEP_MS = 7000;
+
+// Score for a round: the first one out scores nothing, the next one point, and
+// the last one standing the most. A match runs until someone reaches
+// ROYALE_POINTS_PER_PLAYER × (players − 1).
+export const ROYALE_POINTS_PER_PLAYER = 3;
 
 // --- names and colours ----------------------------------------------------------
 //
@@ -142,16 +183,24 @@ export const ABSORB_GRACE_MS = 500;
 // only) or "line" (one way, the way you faced, to the edge of the board).
 // `fuseMs` overrides BOMB_FUSE_MS. `stealth` and `ability` are described with
 // the Shade and Decoy numbers below.
+//
+// `throwRange` is how far a bomb can be thrown with the mouse (or a dragged
+// thumb): the bomb arcs over walls and crates and lands on the square aimed
+// at, or — if that square is taken — on the last free square on the way.
+// Without an aim it drops at your feet, as it always did. A sniper is the
+// exception: it places its bomb exactly on the square aimed at, never nearer
+// than `minRange` and never further than `maxRange`.
 
 export const CLASSES = {
   classic: {
     id: "classic",
     name: "Classic",
-    blurb: "3 bombs, full radius. The all-rounder.",
+    blurb: "3 bombs, full radius, thrown up to 3 squares. The all-rounder.",
     maxBombs: 3,
     blastRadius: 2,
     delivery: "self",
     shields: 0,
+    throwRange: 3,
   },
   speedy: {
     id: "speedy",
@@ -161,15 +210,17 @@ export const CLASSES = {
     blastRadius: 1,
     delivery: "self",
     shields: 0,
+    throwRange: 2,
   },
   sniper: {
     id: "sniper",
     name: "Sniper",
-    blurb: "2 bombs that land right next to your opponent. Only from 4+ squares away.",
+    blurb: "2 bombs that land exactly where you aim, 4 to 9 squares away.",
     maxBombs: 2,
     blastRadius: 2,
     delivery: "remote",
     minRange: 4,
+    maxRange: 9,
     shields: 0,
   },
   tank: {
@@ -180,6 +231,7 @@ export const CLASSES = {
     blastRadius: 1,
     delivery: "self",
     shields: 1,
+    throwRange: 2,
   },
   quickfuse: {
     id: "quickfuse",
@@ -189,6 +241,7 @@ export const CLASSES = {
     blastRadius: 1,
     delivery: "self",
     shields: 0,
+    throwRange: 2, // a half-second fuse plus a long throw would be unfair
     fuseMs: 533, // the same share of the normal fuse as before: 0.8 of 1.5 s
   },
   diagonal: {
@@ -199,16 +252,18 @@ export const CLASSES = {
     blastRadius: 2,
     delivery: "self",
     shields: 0,
+    throwRange: 3,
     pattern: "x",
   },
   line: {
     id: "line",
     name: "Line",
-    blurb: "Fire shoots one way only — the way you face — all the way to the edge.",
+    blurb: "Fire shoots one way only — where you aim — all the way to the edge.",
     maxBombs: 2,
     blastRadius: Math.max(COLS, ROWS),
     delivery: "self",
     shields: 0,
+    throwRange: 0, // the aim turns the lane instead of throwing the bomb
     pattern: "line",
   },
   shade: {
@@ -219,6 +274,7 @@ export const CLASSES = {
     blastRadius: 2,
     delivery: "self",
     shields: 0,
+    throwRange: 3,
     stealth: true,
     onlineOnly: true, // on a shared screen there is nobody to hide from
   },
@@ -230,6 +286,7 @@ export const CLASSES = {
     blastRadius: 2,
     delivery: "self",
     shields: 0,
+    throwRange: 2,
     ability: "decoy",
   },
 };
@@ -246,6 +303,7 @@ export const SHADE_VANISH_MS = 1000;
 // from you by the other team, and pops in fire.
 export const DECOY_MS = 3000;
 export const DECOY_COOLDOWN_MS = 6000;
+export const DECOY_RANGE = 3;  // how far away a decoy can be put down
 
 export const CLASS_IDS = Object.keys(CLASSES);
 export const DEFAULT_CLASS = "classic";
@@ -263,6 +321,7 @@ export const DEFAULT_CLASS = "classic";
 
 export const TILE_FLOOR = 0;
 export const TILE_WALL = -1;
+export const TILE_FIRE = -2;  // burnt by the closing ring: open to walk into, and lethal
 
 export const SPAWN_CLEAR_RADIUS = 2; // squares (in steps) kept empty around each spawn
 export const WALL_PIECES = [1, 2];   // per half of the board, inclusive

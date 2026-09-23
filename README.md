@@ -2,7 +2,8 @@
 
 Zwei Spieler, ein 12×16-Raster, Bomben mit 1 Sekunde Zündschnur.
 Spielbar **lokal an einem Gerät** oder **online über einen Raumcode** — online auch
-als **2v2** mit vier Geräten.
+als **2v2** mit vier Geräten und als **Free-for-all** mit bis zu sechs auf einem
+viermal so großen Feld, in das eine Feuerwand hineinwächst.
 
 ## Regeln
 
@@ -83,6 +84,48 @@ Online können vier Leute in zwei Teams spielen — jeder auf seinem eigenen Ger
   so erkennt man Teamkollegen auch bei frei gewählten Farben.
 - Verliert jemand die Verbindung, pausiert das Match für alle, wie im 1v1. Verlässt ein Gast
   die Lobby, wird nur sein Platz frei; verlässt jemand ein laufendes Match, endet es.
+
+## Free-for-all
+
+Jeder gegen jeden, **drei bis sechs Spieler**, auf einem **25×25-Feld** — mehr als viermal
+so groß wie das normale. Ein eigener Spielmodus: online über einen Raumcode, oder solo
+gegen Bots.
+
+- **Ein Leben pro Runde.** Wer getroffen wird, ist für die Runde raus; die Runde endet,
+  wenn nur noch einer steht.
+- **Punkte statt Leben:** Wer zuerst rausfliegt, bekommt 0 Punkte, der Nächste 1, und der
+  letzte Überlebende die meisten. Das Match gewinnt, wer als Erster **3 × (Spieler − 1)**
+  Punkte hat — bei sechs Spielern also 15.
+- **Die Feuerwand:** Nach **20 Sekunden** fängt der äußerste Ring des Feldes Feuer, danach
+  alle **7 Sekunden** ein weiterer. Verbrannter Boden bleibt für die Runde verbrannt: Man
+  kann hineinlaufen, und er tötet — **kein Schild hilft**, auch keine Panzerung. Mauern,
+  Kisten und Bomben, die er erreicht, verbrennen mit (Bomben zünden dabei).
+  Oben rechts steht, wann der nächste Ring kommt.
+- **Kein Fatality**, dafür zählt jede Runde für die Tabelle. Killstreaks laufen weiter.
+- **Lobby:** Sechs Plätze, gestartet wird ab **drei**. Freie Plätze kann der Host mit Bots
+  füllen; beim Start rücken alle zusammen.
+- Bots spielen es mit: Sie weichen der Feuerwand rechtzeitig nach innen aus — je besser die
+  Stufe, desto früher.
+
+## Zielen mit Maus und Finger
+
+Bomben werden **geworfen**: Dorthin, wo der Mauszeiger steht, per Klick. Die Tastatur legt
+sie weiter zu Füßen (`Space`/`Enter`).
+
+- Während der Zeiger über dem Feld ist, zeigt das Spielfeld **wo die Bombe landet** und
+  **welche Felder ihr Feuer treffen würde**.
+- Die Bombe fliegt **über Mauern und Kisten** hinweg. Landen kann sie dort natürlich nicht:
+  Ist das Zielfeld belegt, fällt sie auf das letzte freie Feld davor. Zu weit geklickt
+  heißt: so weit, wie die Klasse wirft.
+- **Wurfweiten:** Classic, Diagonal und Shade 3 Felder, Speedy, Tank, Quickfuse und Decoy
+  2 Felder. **Sniper** wirft nicht, sondern legt die Bombe **genau auf das angeklickte
+  Feld**, 4 bis 9 Felder entfernt — näher oder weiter geht nicht. **Line** wirft ebenfalls
+  nicht: Der Klick **dreht die Bahn** dorthin.
+- **Rechtsklick** setzt den **Decoy** an die angeklickte Stelle (bis 3 Felder).
+- **Auf dem Handy:** Vom Bomben-Knopf **wegziehen** zielt (Richtung und Länge des Zugs
+  bestimmen das Feld), Loslassen wirft. Ein einfacher Tipp legt die Bombe wie bisher zu Füßen.
+- **Lokal zu zweit** gehört die Maus Spieler 1; Spieler 2 spielt mit der Tastatur (und auf
+  Touch-Geräten mit der eigenen Leiste).
 
 ## Bots
 
@@ -188,10 +231,10 @@ wie viel man aushält — nicht die Laufgeschwindigkeit.
 
 | Klasse | Bomben gleichzeitig | Radius | Wo die Bombe erscheint | Treffer pro Leben |
 |---|---|---|---|---|
-| **Classic** | 3 | 2 Felder | auf dem eigenen Feld | 1 (eigene Bombe: 2) |
-| **Speedy** | 5 | 1 Feld | auf dem eigenen Feld | 1 (eigene Bombe: 2) |
-| **Sniper** | 2 | 2 Felder | auf einem der 8 Felder **um den Gegner** | 1 (eigene Bombe: 2) |
-| **Tank** | 2 | 1 Feld | auf dem eigenen Feld | 2 (eigene Bombe: 3) |
+| **Classic** | 3 | 2 Felder | auf dem eigenen Feld oder bis 3 Felder geworfen | 1 (eigene Bombe: 2) |
+| **Speedy** | 5 | 1 Feld | eigenes Feld oder bis 2 Felder geworfen | 1 (eigene Bombe: 2) |
+| **Sniper** | 2 | 2 Felder | **genau auf das angeklickte Feld**, 4–9 Felder weit | 1 (eigene Bombe: 2) |
+| **Tank** | 2 | 1 Feld | eigenes Feld oder bis 2 Felder geworfen | 2 (eigene Bombe: 3) |
 | **Quickfuse** | 3 | 1 Feld | auf dem eigenen Feld, Zündschnur **0,53 s** | 1 (eigene Bombe: 2) |
 | **Diagonal** | 3 | 2 Felder, als **X** | auf dem eigenen Feld | 1 (eigene Bombe: 2) |
 | **Line** | 2 | eine Richtung **bis zum Rand** | auf dem eigenen Feld | 1 (eigene Bombe: 2) |
@@ -233,12 +276,11 @@ Panzerung — die beiden stapeln sich. Im HUD steht neben den Leben je eine Raut
 Schild: gelb gegen die eigene Bombe, weiß für die Panzerung. Verbrauchte bleiben als
 Umriss sichtbar.
 
-**Sniper im Detail:** Der Schuss landet zufällig auf einem der 8 Nachbarfelder des
-Gegners; belegte Felder fallen weg. Er ist nur möglich, wenn der Sniper **mindestens
-4 Felder** vom Gegner entfernt steht — gemessen als Ringabstand, also
-`max(|dx|, |dy|)`, passend zum Ring aus 8 Feldern. Solange ein Schuss möglich ist,
-werden die Zielfelder im Spiel gestrichelt markiert. Ist der Sniper zu nah oder liegt
-der Gegner gerade gefallen, passiert beim Drücken nichts.
+**Sniper im Detail:** Mit der Maus landet der Schuss **genau dort, wo geklickt wurde** —
+zwischen 4 und 9 Feldern Abstand (Ringabstand, also `max(|dx|, |dy|)`). Zu nah, zu weit oder
+auf eine Mauer geklickt: kein Schuss. Ohne Maus (Tastatur, Bots ohne Ziel) schießt er wie
+bisher automatisch auf eines der 8 Nachbarfelder des nächsten sichtbaren Gegners; solange
+das möglich ist, sind diese Felder gestrichelt markiert.
 
 ## Steuerung
 
@@ -385,7 +427,11 @@ beeinflussen. Außerdem die neuen Klassen (Quickfuse-Zündschnur, X-Muster, Line
 und -Reichweite, Shade verschwinden/leiser Schritt/aufgedeckt/Ansicht ohne Position,
 Decoy spiegeln/blockieren/Abklingzeit/zerplatzen/Sniper-Ziel), 2v2 (Teams, Rundenende erst
 bei ausgelöschtem Team, gemeinsame Leben und Serie, Eigenbeschuss, Team-Fatality),
-Namen und Farben, die Match-Statistik und die Killcam-Pause. Die älteren Regeltests laufen auf einem leeren Feld
+Namen und Farben, die Match-Statistik und die Killcam-Pause. Dazu das Werfen (Zielfeld,
+zu weit geklickt, Bogen über Mauern, belegtes Ziel, Sniper-Grenzen, Line dreht die Bahn,
+Decoy auf Abstand) und den Free-for-all (25×25, sechs Seiten, Punkte nach Platzierung,
+Punkteziel, Feuerwand: Wartezeit, Ring für Ring, tötet trotz Schild, zündet Bomben,
+Rundenreset). Die älteren Regeltests laufen auf einem leeren Feld
 (`obstacles: false`, `countdownMs: 0`), damit weder ein Zufallsfeld noch der
 Countdown sie stört.
 
@@ -411,13 +457,16 @@ Lässt Bots headless ganze Matches spielen: Ein Hard-Bot findet und besiegt auf 
 Spielfeldern einen Gegner, der stillsteht (mit jeder Klasse), Medium und Hard entkommen einer
 Bombe direkt unter ihnen, die Stufen schlagen sich in der erwarteten Reihenfolge, Hard gegen
 Hard kämpft ohne sich selbst in die Luft zu jagen, vier Bots spielen ein 2v2 zu Ende, und eine
-angebotene Fatality wird genommen.
+angebotene Fatality wird genommen. Außerdem spielen sechs Bots einen Free-for-all bis zum
+Punkteziel — sie weichen der Feuerwand aus, statt hineinzulaufen.
 
 ```bash
 npm run test:teams
 ```
 
-Startet ebenfalls einen eigenen Server und spielt 2v2 mit vier Clients: Lobby, Farbkonflikt,
+Startet ebenfalls einen eigenen Server und spielt 2v2 mit vier Clients und einen
+Free-for-all-Raum (sechs Plätze, Start ab drei, Bot auf einem hinteren Platz, Plätze rücken
+beim Start zusammen) sowie einen geworfenen Bombenwurf übers Netz. Im Einzelnen: Lobby, Farbkonflikt,
 Platzwechsel, fünfter Spieler abgewiesen, nur der Host startet, Teams und Namen im Match, ein
 versteckter Shade (Teamkollege sieht ihn, Gegner bekommen keine Position), Decoy übers Netz,
 Verbindungsabbruch und Rückkehr, Lobby verlassen, Namen/Farben im 1v1 sowie Bots in Online-Räumen

@@ -104,10 +104,11 @@ const httpServer = createServer(async (req, res) => {
 // and resumes with a 3-2-1. Only an explicit "leave", or a grace period running
 // out, closes the room.
 //
-// 1v1 starts as soon as both seats are filled. 2v2 waits in a lobby, where
-// players can swap to an empty seat (and so pick their team) until the host
-// starts the match. Before a match the host can also put a bot in any empty
-// seat; bots play inside the match loop and never disconnect.
+// 1v1 starts as soon as both seats are filled. 2v2 and the free-for-all wait
+// in a lobby, where players can move to an empty seat (and so pick their side)
+// until the host starts the match — 2v2 with all four seats taken, the
+// free-for-all with at least three. Before a match the host can also put a bot
+// in any empty seat; bots play inside the match loop and never disconnect.
 
 const RECONNECT_GRACE_MS = Number(process.env.RECONNECT_GRACE_MS || 30000); // in a match
 const LOBBY_GRACE_MS = Number(process.env.LOBBY_GRACE_MS || 180000);        // before it starts
@@ -167,7 +168,11 @@ function createRoom(format) {
 }
 
 const nameAt = (room, index) => (room.seats[index] && room.seats[index].name) || defaultName(index);
-const allSeated = (room) => room.seats.every((seat) => seat && (seat.socket || seat.bot));
+const taken = (seat) => Boolean(seat && (seat.socket || seat.bot));
+const allSeated = (room) => room.seats.every(taken);
+// Enough to play: every seat in 1v1 and 2v2, three or more in a free-for-all.
+const readyToStart = (room) => room.seats.filter(taken).length >= FORMATS[room.format].min;
+const isLobby = (room) => room.format !== "duel";
 
 // A colour nobody else in the room has: the one asked for, else the seat's
 // default, else the first free one.
@@ -240,6 +245,8 @@ function sendLobby(room) {
       type: "lobby",
       code: room.code,
       format: room.format,
+      min: FORMATS[room.format].min,
+      ready: readyToStart(room),
       mode: room.mode,
       killCam: room.killCam,
       slot: index,
@@ -286,18 +293,26 @@ function stopLoop(room) {
 }
 
 function startMatch(room) {
+  // A free-for-all can start with empty seats; close the gaps first, so a seat
+  // number is a player number for the rest of the match.
+  if (room.seats.some((seat) => !taken(seat))) {
+    room.seats = [...room.seats.filter(taken), ...room.seats.filter((seat) => !taken(seat))];
+    sendLobby(room);
+  }
+  const players = room.seats.filter(taken);
   room.game = createGame({
     format: room.format,
     mode: room.mode,
     killCam: room.killCam,
-    players: room.seats.map((seat) => ({ className: seat.className, name: seat.name, color: seat.color })),
+    players: players.map((seat) => ({ className: seat.className, name: seat.name, color: seat.color })),
   });
   room.bots = room.seats
-    .map((seat, index) => seat.bot && { index, bot: createBot(index, seat.bot), hands: handsFor(room.game, index) })
+    .map((seat, index) => seat && seat.bot && index < players.length &&
+      { index, bot: createBot(index, seat.bot), hands: handsFor(room.game, index) })
     .filter(Boolean);
   broadcast(room, {
     type: "start",
-    classes: room.seats.map((seat) => seat.className),
+    classes: players.map((seat) => seat.className),
     mode: room.mode,
     format: room.format,
     killCam: room.killCam,
@@ -320,7 +335,7 @@ function seatDropped(room, seat) {
   const grace = room.game ? RECONNECT_GRACE_MS : LOBBY_GRACE_MS;
   stopLoop(room); // the game state stays exactly as it was
   broadcast(room, { type: "opponent-lost", slot: index, grace }, seat);
-  if (!room.game && room.format === "teams") sendLobby(room);
+  if (!room.game && isLobby(room)) sendLobby(room);
   clearTimeout(seat.dropTimer);
   seat.dropTimer = setTimeout(() => {
     if (seat.socket || !rooms.has(room.code) || !room.seats.includes(seat)) return;
@@ -398,7 +413,7 @@ wss.on("connection", (socket) => {
       room = found;
       seat = sitDown(room, free, socket, msg);
       send(socket, joinedMessage(room, seat));
-      if (room.format === "teams") {
+      if (isLobby(room)) {
         sendLobby(room);
       } else if (allSeated(room)) {
         startMatch(room);
@@ -451,7 +466,7 @@ wss.on("connection", (socket) => {
         carryOn(room);
         return;
       }
-      if (room.format === "teams" && !room.game) {
+      if (isLobby(room) && !room.game) {
         sendLobby(room);
         return;
       }
@@ -469,7 +484,7 @@ wss.on("connection", (socket) => {
       if (room && seat && rooms.has(room.code) && room.seats.includes(seat)) {
         const index = slot();
         clearTimeout(seat.dropTimer);
-        if (!room.game && room.format === "teams" && seat !== room.host) {
+        if (!room.game && isLobby(room) && seat !== room.host) {
           room.seats[index] = null;
           sendLobby(room);
         } else {
@@ -492,12 +507,12 @@ wss.on("connection", (socket) => {
       else if (msg.type === "removeBot" && room.seats[to] && room.seats[to].bot) room.seats[to] = null;
       else return;
       if (room.format === "duel" && allSeated(room)) startMatch(room);
-      else if (room.format === "teams") sendLobby(room);
+      else if (isLobby(room)) sendLobby(room);
       return;
     }
 
-    // --- the 2v2 lobby ---
-    if (!room.game && room.format === "teams") {
+    // --- the lobby (2v2 and free-for-all) ---
+    if (!room.game && isLobby(room)) {
       if (msg.type === "seat") {
         const to = Number(msg.to);
         if (Number.isInteger(to) && to >= 0 && to < room.seats.length && room.seats[to] === null) {
@@ -505,7 +520,7 @@ wss.on("connection", (socket) => {
           room.seats[to] = seat;
           sendLobby(room);
         }
-      } else if (msg.type === "start" && seat === room.host && allSeated(room)) {
+      } else if (msg.type === "start" && seat === room.host && readyToStart(room)) {
         startMatch(room);
       }
       return;
@@ -519,13 +534,13 @@ wss.on("connection", (socket) => {
     } else if (msg.type === "hold") {
       setHeld(room.game, index, msg.dir);
     } else if (msg.type === "bomb") {
-      requestBomb(room.game, index);
+      requestBomb(room.game, index, msg.aim);
     } else if (msg.type === "ability") {
-      requestAbility(room.game, index);
+      requestAbility(room.game, index, msg.aim);
     } else if (msg.type === "fatality") {
       requestFatality(room.game, index);
     } else if (msg.type === "rematch" && room.game.status === "over") {
-      if (allSeated(room)) startMatch(room);
+      if (readyToStart(room) && room.seats.filter(taken).length >= room.game.players.length) startMatch(room);
     }
   });
 

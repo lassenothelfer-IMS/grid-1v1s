@@ -7,7 +7,6 @@ import {
   SPAWNS,
   FORMATS,
   DEFAULT_FORMAT,
-  teamOfIndex,
   COLOR_IDS,
   DEFAULT_COLORS,
   cleanName,
@@ -31,12 +30,17 @@ import {
   SHADE_VANISH_MS,
   DECOY_MS,
   DECOY_COOLDOWN_MS,
+  DECOY_RANGE,
+  RING_GRACE_MS,
+  RING_STEP_MS,
+  ROYALE_POINTS_PER_PLAYER,
   DIRECTIONS,
   CLASSES,
   DEFAULT_CLASS,
   RING_8,
   TILE_FLOOR,
   TILE_WALL,
+  TILE_FIRE,
   SPAWN_CLEAR_RADIUS,
   WALL_PIECES,
   CRATE_PIECES,
@@ -48,7 +52,10 @@ const DIR_VECTORS = Object.values(DIRECTIONS);
 const DIAGONALS = [{ dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 }, { dx: 1, dy: 1 }];
 // A decoy takes the same step up or down as its owner, the opposite one sideways.
 const MIRROR = { up: "up", down: "down", left: "right", right: "left" };
-const TEAMS = [0, 1];
+
+// Every side that is still playing: two teams in 1v1 and 2v2, one per player
+// in free-for-all.
+const sides = (state) => Array.from({ length: state.sides }, (_, i) => i);
 
 // --- arena layout -------------------------------------------------------------
 
@@ -63,27 +70,21 @@ function mulberry32(seed) {
   };
 }
 
-const tileIndex = (x, y) => y * COLS + x;
-
-// The square a cell maps to when the board is rotated 180° about its centre.
-function twinOf({ x, y }) {
-  return { x: COLS - 1 - x, y: ROWS - 1 - y };
-}
-
 // True while every square that is not a wall can still be reached from the
 // first spawn. Crates count as reachable — a bomb opens them.
-function wallsLeaveBoardConnected(tiles, start) {
-  const seen = new Uint8Array(COLS * ROWS);
+function wallsLeaveBoardConnected(board, tiles, start) {
+  const { cols, rows } = board;
+  const seen = new Uint8Array(cols * rows);
   const queue = [start];
-  seen[tileIndex(start.x, start.y)] = 1;
+  seen[start.y * cols + start.x] = 1;
   let reached = 1;
   while (queue.length) {
     const { x, y } = queue.pop();
     for (const { dx, dy } of DIR_VECTORS) {
       const nx = x + dx;
       const ny = y + dy;
-      if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
-      const i = tileIndex(nx, ny);
+      if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
+      const i = ny * cols + nx;
       if (seen[i] || tiles[i] === TILE_WALL) continue;
       seen[i] = 1;
       reached += 1;
@@ -95,11 +96,38 @@ function wallsLeaveBoardConnected(tiles, start) {
 }
 
 // Deals a board: walls first (kept apart and never splitting the board), then
-// crates. Pieces are placed in the top half and mirrored into the bottom half.
-// The squares around every spawn in `spawns` stay clear.
-export function generateLayout(seed, spawns = SPAWNS) {
+// crates. Every piece is placed inside one symmetric region and copied around:
+// with `symmetry: 2` the top half is mirrored into the bottom, with 4 a quarter
+// is turned around the centre (square boards). The squares around every spawn
+// stay clear. `walls` and `crates` count pieces per region.
+export function generateLayout(seed, options = {}) {
+  const shape = FORMATS[options.format] || {};
+  const cols = options.cols ?? shape.cols ?? COLS;
+  const rows = options.rows ?? shape.rows ?? ROWS;
+  const spawns = options.spawns ?? shape.spawns ?? SPAWNS;
+  const folds = options.symmetry ?? shape.symmetry ?? 2;
+  const wallPieces = options.walls ?? shape.walls ?? WALL_PIECES;
+  const cratePieces = options.crates ?? shape.crates ?? CRATE_PIECES;
+  const tileIndex = (x, y) => y * cols + x;
+  // Every image of a cell under this board's symmetry: the cell itself, plus
+  // the half-turn, or three quarter-turns.
+  const copies = (cell) => {
+    if (folds === 4) {
+      const out = [];
+      let c = cell;
+      for (let i = 0; i < 4; i += 1) {
+        out.push(c);
+        c = { x: cols - 1 - c.y, y: c.x };
+      }
+      return out;
+    }
+    return [cell, { x: cols - 1 - cell.x, y: rows - 1 - cell.y }];
+  };
+  const regionCols = folds === 4 ? Math.ceil(cols / 2) : cols;
+  const regionRows = Math.ceil(rows / 2);
+
   const rng = mulberry32(seed);
-  const tiles = new Array(COLS * ROWS).fill(TILE_FLOOR);
+  const tiles = new Array(cols * rows).fill(TILE_FLOOR);
   const nearSpawn = (x, y) =>
     spawns.some((s) => Math.abs(s.x - x) + Math.abs(s.y - y) <= SPAWN_CLEAR_RADIUS);
   const between = ([lo, hi]) => lo + Math.floor(rng() * (hi - lo + 1));
@@ -112,21 +140,24 @@ export function generateLayout(seed, spawns = SPAWNS) {
     return shapes[shapes.length - 1].cells;
   };
 
-  // A random spot for `cells` in the top half, plus its mirrored twin — or
-  // null if either copy would overlap something or crowd a spawn.
+  // A random spot for `cells` inside the region, with all its copies — or
+  // null if any copy would overlap something or crowd a spawn.
   const propose = (cells) => {
     const w = Math.max(...cells.map(([dx]) => dx)) + 1;
     const h = Math.max(...cells.map(([, dy]) => dy)) + 1;
-    const ox = Math.floor(rng() * (COLS - w + 1));
-    const oy = Math.floor(rng() * (ROWS / 2 - h + 1));
+    const ox = Math.floor(rng() * Math.max(1, regionCols - w + 1));
+    const oy = Math.floor(rng() * Math.max(1, regionRows - h + 1));
     const piece = cells.map(([dx, dy]) => ({ x: ox + dx, y: oy + dy }));
-    const twin = piece.map(twinOf);
-    const all = [...piece, ...twin];
-    if (all.some((c) => nearSpawn(c.x, c.y) || tiles[tileIndex(c.x, c.y)] !== TILE_FLOOR)) return null;
-    return { piece, twin, all };
+    const groups = piece.map(copies);
+    const all = groups.flat();
+    if (all.some((c) => c.x >= cols || c.y >= rows || nearSpawn(c.x, c.y) ||
+      tiles[tileIndex(c.x, c.y)] !== TILE_FLOOR)) return null;
+    // One group per copy of the piece, so each copy can be one whole crate.
+    const pieces = Array.from({ length: groups[0].length }, (_, i) => groups.map((g) => g[i]));
+    return { pieces, all };
   };
 
-  const wallTarget = between(WALL_PIECES);
+  const wallTarget = between(wallPieces);
   for (let placed = 0, tries = 0; placed < wallTarget && tries < 400; tries += 1) {
     const spot = propose(pick(WALL_SHAPES));
     if (!spot) continue;
@@ -138,7 +169,7 @@ export function generateLayout(seed, spawns = SPAWNS) {
         for (let dx = -1; dx <= 1; dx += 1) {
           const nx = c.x + dx;
           const ny = c.y + dy;
-          if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+          if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
           const i = tileIndex(nx, ny);
           if (!own.has(i) && tiles[i] === TILE_WALL) return true;
         }
@@ -147,23 +178,23 @@ export function generateLayout(seed, spawns = SPAWNS) {
     });
     if (crowded) continue;
     for (const c of spot.all) tiles[tileIndex(c.x, c.y)] = TILE_WALL;
-    if (!wallsLeaveBoardConnected(tiles, spawns[0])) {
+    if (!wallsLeaveBoardConnected({ cols, rows }, tiles, spawns[0])) {
       for (const c of spot.all) tiles[tileIndex(c.x, c.y)] = TILE_FLOOR;
       continue;
     }
     placed += 1;
   }
 
-  const crateTarget = between(CRATE_PIECES);
+  const crateTarget = between(cratePieces);
   let nextCrate = 1;
   for (let placed = 0, tries = 0; placed < crateTarget && tries < 400; tries += 1) {
     const spot = propose(pick(CRATE_SHAPES));
     if (!spot) continue;
-    const pieceId = nextCrate;
-    const twinId = nextCrate + 1;
-    nextCrate += 2;
-    for (const c of spot.piece) tiles[tileIndex(c.x, c.y)] = pieceId;
-    for (const c of spot.twin) tiles[tileIndex(c.x, c.y)] = twinId;
+    for (const copy of spot.pieces) {
+      const id = nextCrate;
+      nextCrate += 1;
+      for (const c of copy) tiles[tileIndex(c.x, c.y)] = id;
+    }
     placed += 1;
   }
 
@@ -171,11 +202,16 @@ export function generateLayout(seed, spawns = SPAWNS) {
 }
 
 export function tileAt(state, x, y) {
-  return state.tiles[tileIndex(x, y)];
+  return state.tiles[y * state.cols + x];
 }
 
-function isSolid(state, x, y) {
-  return tileAt(state, x, y) !== TILE_FLOOR;
+// Walls and crates stop movement and fire. Ground burnt by the ring does not:
+// you can walk into it, and it kills you for it.
+const isWall = (tile) => tile === TILE_WALL;
+const isCrate = (tile) => tile > 0;
+function blocked(state, x, y) {
+  const tile = tileAt(state, x, y);
+  return isWall(tile) || isCrate(tile);
 }
 
 export function classOf(player) {
@@ -210,10 +246,10 @@ function freshStats() {
   };
 }
 
-function makePlayer(index, spec, lives, spawn) {
+function makePlayer(index, spec, lives, spawn, team) {
   const player = {
     index,
-    team: teamOfIndex(index),
+    team,
     name: cleanName(spec.name) || defaultName(index),
     color: COLOR_IDS.includes(spec.color) ? spec.color : DEFAULT_COLORS[index],
     className: CLASSES[spec.className] ? spec.className : DEFAULT_CLASS,
@@ -238,13 +274,16 @@ function makePlayer(index, spec, lives, spawn) {
     invulnMax: ABSORB_GRACE_MS, // what invulnIn started from, for drawing the ring
     hidden: false,       // a Shade out of the other team's sight
     still: 0,            // ms since you last moved, bombed or were hit
+    bombAim: null,       // the square a thrown bomb is meant for
+    abilityAim: null,
+    score: 0,            // free-for-all points, over the whole match
     stats: freshStats(),
   };
   refillShields(player);
   return player;
 }
 
-// options.format — "duel" (1v1, the default) or "teams" (2v2)
+// options.format — "duel" (1v1, the default), "teams" (2v2) or "royale" (free-for-all)
 // options.players — per player { className, name, color }
 // options.classes — class id per player (shorthand when only classes matter)
 // options.mode — "blitz" or "siege" (see MODES); sets the lives
@@ -254,20 +293,24 @@ function makePlayer(index, spec, lives, spawn) {
 // options.countdownMs — length of the opening countdown (0 starts live; tests)
 export function createGame(options = {}) {
   const format = FORMATS[options.format] ? options.format : DEFAULT_FORMAT;
-  const { players: count, spawns } = FORMATS[format];
+  const shape = FORMATS[format];
+  const asked = options.players?.length || options.classes?.length || shape.players;
+  const count = Math.max(shape.min, Math.min(shape.players, asked));
+  const spawns = shape.spawns.slice(0, count);
+  const { cols, rows } = shape;
   const mode = MODES[options.mode] ? options.mode : DEFAULT_MODE;
-  const lives = MODES[mode].lives;
+  const lives = shape.lives ?? MODES[mode].lives;
   const seed = options.seed ?? Math.floor(Math.random() * 4294967296);
   const countdown = options.countdownMs ?? COUNTDOWN_MS;
   const tiles = options.obstacles === false
-    ? new Array(COLS * ROWS).fill(TILE_FLOOR)
-    : generateLayout(seed, spawns);
+    ? new Array(cols * rows).fill(TILE_FLOOR)
+    : generateLayout(seed, { format, spawns });
 
   // Nobody shares a colour: a taken one falls back to the first free one.
   const taken = new Set();
   const players = Array.from({ length: count }, (_, i) => {
     const spec = { className: options.classes?.[i], ...(options.players?.[i] || {}) };
-    const player = makePlayer(i, spec, lives, spawns[i]);
+    const player = makePlayer(i, spec, lives, spawns[i], shape.ffa ? i : i % 2);
     if (taken.has(player.color)) player.color = COLOR_IDS.find((c) => !taken.has(c));
     taken.add(player.color);
     return player;
@@ -279,6 +322,13 @@ export function createGame(options = {}) {
     finish: null,        // { type: "fatality", by, victim, victims, x, y, streak } when it ends in one
     pendingWinner: null, // set while a match-winning kill holds the freeze open for a finish
     format,
+    cols,
+    rows,
+    sides: shape.ffa ? count : 2,   // how many sides are playing
+    ffa: Boolean(shape.ffa),        // everyone for themselves: points, not lives
+    fatality: shape.fatality !== false,
+    target: shape.ffa ? ROYALE_POINTS_PER_PLAYER * (count - 1) : 0, // points that win a free-for-all
+    ring: shape.ring ? { inset: 0, left: RING_GRACE_MS } : null,    // the closing fire wall
     mode,
     maxLives: lives,
     killCam: Boolean(options.killCam),
@@ -325,17 +375,26 @@ export function setHeld(state, index, dir) {
   player.holdTimer = HOLD_REPEAT_MS;
 }
 
-export function requestBomb(state, index) {
+// `aim` is the square the bomb is meant for — where the mouse pointed, or
+// where a dragged thumb pointed. Without one the bomb drops at your feet.
+export function requestBomb(state, index, aim = null) {
   const player = state.players[index];
   if (!player) return;
   player.bombQueued = true;
+  player.bombAim = squareOf(aim);
 }
 
-// The class ability (Decoy). Does nothing for classes without one.
-export function requestAbility(state, index) {
+// The class ability (Decoy), aimed the same way.
+export function requestAbility(state, index, aim = null) {
   const player = state.players[index];
   if (!player) return;
   player.abilityQueued = true;
+  player.abilityAim = squareOf(aim);
+}
+
+function squareOf(aim) {
+  if (!aim || !Number.isFinite(aim.x) || !Number.isFinite(aim.y)) return null;
+  return { x: Math.round(aim.x), y: Math.round(aim.y) };
 }
 
 // After a pause — an online player dropped and came back — a live round picks
@@ -353,8 +412,63 @@ export function requestFatality(state, index) {
   player.fatalityQueued = true;
 }
 
-function inBounds(x, y) {
-  return x >= 0 && x < COLS && y >= 0 && y < ROWS;
+function inBounds(state, x, y) {
+  return x >= 0 && x < state.cols && y >= 0 && y < state.rows;
+}
+
+// The squares a straight line of sight crosses, from one square to another.
+function lineBetween(from, to) {
+  const cells = [];
+  let x = from.x;
+  let y = from.y;
+  const dx = Math.abs(to.x - x);
+  const dy = Math.abs(to.y - y);
+  const sx = x < to.x ? 1 : -1;
+  const sy = y < to.y ? 1 : -1;
+  let err = dx - dy;
+  for (let guard = 0; guard <= dx + dy + 1; guard += 1) {
+    cells.push({ x, y });
+    if (x === to.x && y === to.y) break;
+    const step = 2 * err;
+    if (step > -dy) {
+      err -= dy;
+      x += sx;
+    }
+    if (step < dx) {
+      err += dx;
+      y += sy;
+    }
+  }
+  return cells;
+}
+
+// A square a bomb (or a decoy) can be put down on.
+function canSit(state, thrower, cell) {
+  if (!inBounds(state, cell.x, cell.y)) return false;
+  if (blocked(state, cell.x, cell.y)) return false;
+  if (bombAt(state, cell.x, cell.y)) return false;
+  return !playerOn(state, cell.x, cell.y, thrower);
+}
+
+// Where a thrown bomb lands: the square aimed at, or — since it arcs over
+// walls and crates but cannot rest on them — the last free square on the way
+// in. Out of range, it falls short. No aim means "at my feet".
+function landing(state, player, aim, range) {
+  const home = { x: player.x, y: player.y };
+  if (!aim || range <= 0) return canSit(state, player, home) ? home : null;
+  const reachable = lineBetween(home, aim).filter((cell) => ringDistance(home, cell) <= range);
+  for (let i = reachable.length - 1; i >= 0; i -= 1) {
+    if (canSit(state, player, reachable[i])) return reachable[i];
+  }
+  return null;
+}
+
+// The direction from one square toward another, on the wider axis.
+function dirToward(from, to) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (!dx && !dy) return null;
+  return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up");
 }
 
 function bombAt(state, x, y) {
@@ -388,7 +502,7 @@ const inReach = (a, b) => ringDistance(a, b) <= FATALITY_RANGE;
 // that beats your X by a split second does not cost you the fatality.
 export function fatalityReady(state, index) {
   const player = state.players[index];
-  if (!player || state.status !== "playing") return null;
+  if (!player || state.status !== "playing" || state.fatality === false) return null;
   if (!player.alive || player.streak < FATALITY_STREAK) return null;
   const enemies = state.players.filter((p) => p.team !== player.team);
   const anywhere = player.streak >= FATALITY_ANYWHERE_STREAK;
@@ -407,6 +521,7 @@ export function fatalityReady(state, index) {
 
 // The freeze-time rule above, for a whole team: can any of them finish it?
 function canFinish(state, team) {
+  if (state.fatality === false) return false;
   return state.players.some((p) => p.team === team && p.alive && p.streak >= FATALITY_STREAK &&
     (p.streak >= FATALITY_ANYWHERE_STREAK ||
       state.players.some((e) => e.team !== team && inReach(p, e))));
@@ -424,7 +539,7 @@ function sniperMark(state, shooter, minRange) {
       best = d;
     }
   };
-  for (const decoy of state.decoys) if (teamOfIndex(decoy.owner) !== shooter.team) consider(decoy);
+  for (const decoy of state.decoys) if (state.players[decoy.owner].team !== shooter.team) consider(decoy);
   for (const p of state.players) if (p.team !== shooter.team && p.alive && !p.hidden) consider(p);
   return mark;
 }
@@ -442,8 +557,21 @@ export function sniperTargets(state, index) {
 
   return RING_8
     .map(({ dx, dy }) => ({ x: mark.x + dx, y: mark.y + dy }))
-    .filter((cell) => inBounds(cell.x, cell.y) && !isSolid(state, cell.x, cell.y) &&
+    .filter((cell) => inBounds(state, cell.x, cell.y) && !blocked(state, cell.x, cell.y) &&
       !bombAt(state, cell.x, cell.y));
+}
+
+// A sniper's shot: exactly the square aimed at, never nearer than minRange and
+// never further than maxRange. Without an aim it takes its old automatic shot
+// beside whoever is in sight.
+function snipeAt(state, shooter, stats, aim) {
+  if (!aim) {
+    const cells = sniperTargets(state, shooter.index);
+    return cells && cells.length ? cells[Math.floor(Math.random() * cells.length)] : null;
+  }
+  const distance = ringDistance(shooter, aim);
+  if (distance < stats.minRange || distance > (stats.maxRange || stats.minRange)) return null;
+  return canSit(state, shooter, aim) ? { x: aim.x, y: aim.y } : null;
 }
 
 // Fire remembers whose bomb it came from, per player, so a tile that several
@@ -477,11 +605,11 @@ export function fireSquares(state, bomb) {
     for (let r = 1; r <= bomb.radius; r += 1) {
       const x = bomb.x + dx * r;
       const y = bomb.y + dy * r;
-      if (!inBounds(x, y)) break;
+      if (!inBounds(state, x, y)) break;
       const tile = tileAt(state, x, y);
-      if (tile === TILE_WALL) break;
+      if (isWall(tile)) break;
       squares.push({ x, y });
-      if (tile !== TILE_FLOOR) break;
+      if (isCrate(tile)) break;
     }
   }
   return squares;
@@ -511,7 +639,7 @@ function explode(state, bomb) {
       burned.push({ x, y, owner: current.owner });
       if (i === 0) return;
       const tile = tileAt(state, x, y);
-      if (tile !== TILE_FLOOR) {
+      if (isCrate(tile)) {
         if (!broken.has(tile)) broken.set(tile, current.owner);
         return;
       }
@@ -560,24 +688,67 @@ function spawnBomb(state, owner, x, y, stats) {
   state.events.push({ type: "bomb", x, y, owner: owner.index });
 }
 
+// The bomb this player would place if they aimed at `aim` right now: where it
+// would land and what shape its fire would take, or null if the shot is not on
+// (no bombs left, a sniper aiming too close…). The bots use it to pick a shot
+// and the board uses it to show the throw before you commit to it — so all
+// three agree on the rule.
+export function bombPreview(state, index, aim = null) {
+  const player = state.players[index];
+  if (!player || !player.alive) return null;
+  const stats = classOf(player);
+  if (liveBombsOf(state, player.index) >= stats.maxBombs) return null;
+  const target = squareOf(aim);
+  let cell;
+  let dir = player.facing;
+  if (stats.delivery === "remote") {
+    cell = snipeAt(state, player, stats, target);
+  } else if (stats.pattern === "line") {
+    if (target) dir = dirToward(player, target) || dir;
+    cell = landing(state, player, null, 0);
+  } else {
+    cell = landing(state, player, target, stats.throwRange || 0);
+  }
+  if (!cell) return null;
+  return {
+    x: cell.x,
+    y: cell.y,
+    owner: index,
+    fuse: stats.fuseMs || BOMB_FUSE_MS,
+    fuseMax: stats.fuseMs || BOMB_FUSE_MS,
+    radius: stats.blastRadius,
+    shape: stats.pattern || "cross",
+    dir,
+  };
+}
+
 function placeBomb(state, player) {
   if (!player.alive) return;
   const stats = classOf(player);
+  const aim = player.bombAim;
   if (liveBombsOf(state, player.index) >= stats.maxBombs) return;
 
   if (stats.delivery === "remote") {
-    const targets = sniperTargets(state, player.index);
-    if (!targets || targets.length === 0) {
+    const cell = snipeAt(state, player, stats, aim);
+    if (!cell) {
       state.events.push({ type: "bombRefused", index: player.index });
       return;
     }
-    const cell = targets[Math.floor(Math.random() * targets.length)];
     spawnBomb(state, player, cell.x, cell.y, stats);
     return;
   }
 
-  if (bombAt(state, player.x, player.y)) return;
-  spawnBomb(state, player, player.x, player.y, stats);
+  // A line bomb is not thrown: the aim turns its lane instead.
+  if (stats.pattern === "line" && aim) {
+    const dir = dirToward(player, aim);
+    if (dir) player.facing = dir;
+  }
+  const cell = landing(state, player, stats.pattern === "line" ? null : aim, stats.throwRange || 0);
+  if (!cell) return;
+  spawnBomb(state, player, cell.x, cell.y, stats);
+  if (cell.x !== player.x || cell.y !== player.y) {
+    state.events.push({ type: "throw", index: player.index, x: cell.x, y: cell.y });
+  }
 }
 
 function useAbility(state, player) {
@@ -586,10 +757,12 @@ function useAbility(state, player) {
     state.events.push({ type: "abilityRefused", index: player.index });
     return;
   }
+  const cell = landing(state, player, player.abilityAim, DECOY_RANGE);
+  if (!cell) return;
   state.decoys = state.decoys.filter((d) => d.owner !== player.index);
-  state.decoys.push({ x: player.x, y: player.y, owner: player.index, ttl: DECOY_MS });
+  state.decoys.push({ x: cell.x, y: cell.y, owner: player.index, ttl: DECOY_MS });
   player.abilityCd = DECOY_COOLDOWN_MS;
-  state.events.push({ type: "decoy", index: player.index, x: player.x, y: player.y });
+  state.events.push({ type: "decoy", index: player.index, x: cell.x, y: cell.y });
 }
 
 // A decoy's step: blocked by what blocks a player — except its own owner,
@@ -598,7 +771,7 @@ function moveDecoy(state, decoy, dir) {
   const { dx, dy } = DIRECTIONS[dir];
   const nx = decoy.x + dx;
   const ny = decoy.y + dy;
-  if (!inBounds(nx, ny) || isSolid(state, nx, ny) || bombAt(state, nx, ny)) return;
+  if (!inBounds(state, nx, ny) || blocked(state, nx, ny) || bombAt(state, nx, ny)) return;
   if (state.players.some((p) => p.alive && p.index !== decoy.owner && p.x === nx && p.y === ny)) return;
   if (state.decoys.some((d) => d !== decoy && d.x === nx && d.y === ny)) return;
   decoy.x = nx;
@@ -613,8 +786,8 @@ function tryMove(state, player, dir) {
   const nx = player.x + vector.dx;
   const ny = player.y + vector.dy;
 
-  if (!inBounds(nx, ny)) return false;
-  if (isSolid(state, nx, ny)) return false;
+  if (!inBounds(state, nx, ny)) return false;
+  if (blocked(state, nx, ny)) return false;
   const blocker = playerOn(state, nx, ny, player);
   if (blocker) {
     // Walking into a Shade you could not see gives it away.
@@ -684,6 +857,7 @@ function goLive(state) {
 function startNextRound(state) {
   state.round += 1;
   state.tiles = state.layout.slice();
+  if (state.ring) state.ring = { inset: 0, left: RING_GRACE_MS };
   state.bombs = [];
   state.blasts = [];
   state.decoys = [];
@@ -699,7 +873,9 @@ function startNextRound(state) {
     player.pendingMove = null;
     player.pendingTtl = 0;
     player.bombQueued = false;
+    player.bombAim = null;
     player.abilityQueued = false;
+    player.abilityAim = null;
     player.abilityCd = 0;
     player.invulnIn = 0;
     player.hidden = false;
@@ -716,7 +892,9 @@ function dropPresses(state) {
     player.pendingMove = null;
     player.pendingTtl = 0;
     player.bombQueued = false;
+    player.bombAim = null;
     player.abilityQueued = false;
+    player.abilityAim = null;
     player.fatalityQueued = false;
   }
 }
@@ -795,7 +973,7 @@ function takeHit(state, player, blast) {
   let by = null;
   let hottest = 0;
   blast.heat.forEach((heat, owner) => {
-    if (heat > hottest && teamOfIndex(owner) !== player.team) {
+    if (heat > hottest && state.players[owner].team !== player.team) {
       hottest = heat;
       by = owner;
     }
@@ -824,20 +1002,40 @@ function takeHit(state, player, blast) {
   state.events.push({ type: "absorb", index: player.index, by: absorbedBy, x: player.x, y: player.y });
 }
 
-// A team with nobody left standing loses the round — both at once is a draw.
-// The losers lose a life; the winners' streak grows, everyone else's resets.
-// Running out of lives ends the match (a draw if both teams do).
-function endRound(state, wiped) {
-  const winner = wiped.length === 2 ? null : 1 - wiped[0];
+// The round is over once only one side is left standing — or none, which is a
+// draw. In 1v1 and 2v2 the sides that were wiped out lose a life, and running
+// out of lives ends the match. In a free-for-all everyone scores for how long
+// they lasted, and the match runs to a points target.
+function endRound(state, winner) {
   state.history.push(winner);
   for (const player of state.players) {
-    if (wiped.includes(player.team)) player.lives -= 1;
     player.streak = player.team === winner ? player.streak + 1 : 0;
     player.stats.bestStreak = Math.max(player.stats.bestStreak, player.streak);
   }
   state.decoys = [];
 
-  const out = TEAMS.filter((team) => livesOf(state, team) <= 0);
+  if (state.ffa) {
+    // The first one out scores nothing, the next one point… the survivor most.
+    const order = [...state.fallen, ...state.players.filter((p) => p.alive).map((p) => p.index)];
+    order.forEach((index, place) => { state.players[index].score += place; });
+    const best = Math.max(...state.players.map((p) => p.score));
+    const leaders = state.players.filter((p) => p.score === best);
+    if (best >= state.target && leaders.length === 1) {
+      state.status = "over";
+      state.winner = leaders[0].team;
+      return;
+    }
+    state.phase = "roundEnd";
+    state.phaseLeft = state.killCam ? ROUND_END_KILLCAM_MS : ROUND_END_MS;
+    state.events.push({ type: "roundEnd", round: state.round, fallen: state.fallen.slice(), winner });
+    return;
+  }
+
+  const wiped = sides(state).filter((side) => side !== winner);
+  for (const player of state.players) {
+    if (wiped.includes(player.team)) player.lives -= 1;
+  }
+  const out = sides(state).filter((side) => livesOf(state, side) <= 0);
   if (out.length === 2) {
     state.status = "over";
     state.winner = null;
@@ -855,6 +1053,25 @@ function endRound(state, wiped) {
   state.phaseLeft = state.killCam && !finishable ? ROUND_END_KILLCAM_MS : ROUND_END_MS;
   if (out.length === 1) state.pendingWinner = winner;
   state.events.push({ type: "roundEnd", round: state.round, fallen: state.fallen.slice(), winner });
+}
+
+// The fire wall: every so often the outermost ring of squares that is still
+// board catches fire. Whatever stood there — wall, crate, bomb — burns with it.
+function closeRing(state) {
+  const { cols, rows, ring } = state;
+  const edge = ring.inset;
+  for (let y = 0; y < rows; y += 1) {
+    for (let x = 0; x < cols; x += 1) {
+      if (Math.min(x, y, cols - 1 - x, rows - 1 - y) !== edge) continue;
+      state.tiles[y * cols + x] = TILE_FIRE;
+    }
+  }
+  const onFire = (thing) => tileAt(state, thing.x, thing.y) === TILE_FIRE;
+  for (const bomb of state.bombs) if (onFire(bomb)) bomb.fuse = Math.min(bomb.fuse, 1);
+  state.decoys = state.decoys.filter((decoy) => !onFire(decoy));
+  ring.inset += 1;
+  ring.left = RING_STEP_MS;
+  state.events.push({ type: "ring", inset: ring.inset, left: ring.left });
 }
 
 // What one seat may see. Hidden enemies lose their position, and anything that
@@ -940,6 +1157,12 @@ export function step(state, dt) {
   for (const decoy of state.decoys) decoy.ttl -= dt;
   state.decoys = state.decoys.filter((d) => d.ttl > 0);
 
+  // 2b. The fire wall eats another ring of the board.
+  if (state.ring) {
+    state.ring.left -= dt;
+    if (state.ring.left <= 0) closeRing(state);
+  }
+
   // 3. Fuses burn down. Collect first, then explode, so chains see a stable list.
   const due = state.bombs.filter((bomb) => {
     bomb.fuse -= dt;
@@ -953,13 +1176,20 @@ export function step(state, dt) {
   // 4. Fire cools.
   coolFire(state, dt);
 
-  // 5. Anyone standing in fire takes the hit; decoys in fire pop.
+  // 5. Anyone standing in fire takes the hit; decoys in fire pop. Ground the
+  //    ring has burnt spares nobody: no shield stops it.
   for (const player of state.players) {
-    if (!player.alive || player.invulnIn > 0) continue;
+    if (!player.alive) continue;
+    if (tileAt(state, player.x, player.y) === TILE_FIRE) {
+      knockOut(state, player, null);
+      continue;
+    }
+    if (player.invulnIn > 0) continue;
     const blast = state.blasts.find((b) => b.x === player.x && b.y === player.y);
     if (blast) takeHit(state, player, blast);
   }
-  const popped = state.decoys.filter((d) => state.blasts.some((b) => b.x === d.x && b.y === d.y));
+  const popped = state.decoys.filter((d) => state.blasts.some((b) => b.x === d.x && b.y === d.y) ||
+    tileAt(state, d.x, d.y) === TILE_FIRE);
   if (popped.length) {
     state.decoys = state.decoys.filter((d) => !popped.includes(d));
     for (const d of popped) state.events.push({ type: "decoyPopped", owner: d.owner, x: d.x, y: d.y });
@@ -970,7 +1200,7 @@ export function step(state, dt) {
     for (const player of state.players) {
       if (!player.alive) continue;
       const onMe = burned.some((f) => f.x === player.x && f.y === player.y);
-      const close = burned.some((f) => teamOfIndex(f.owner) !== player.team && ringDistance(f, player) === 1);
+      const close = burned.some((f) => state.players[f.owner].team !== player.team && ringDistance(f, player) === 1);
       if (close && !onMe) player.stats.nearMisses += 1;
     }
   }
@@ -985,9 +1215,9 @@ export function step(state, dt) {
     }
   }
 
-  // 8. A team with nobody standing ends the round.
-  const wiped = TEAMS.filter((team) => !state.players.some((p) => p.team === team && p.alive));
-  if (wiped.length) endRound(state, wiped);
+  // 8. One side left standing (or none) ends the round.
+  const standing = sides(state).filter((side) => state.players.some((p) => p.team === side && p.alive));
+  if (standing.length <= 1) endRound(state, standing.length ? standing[0] : null);
 
   return state;
 }

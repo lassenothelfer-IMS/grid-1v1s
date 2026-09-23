@@ -181,6 +181,66 @@ const ended = await cleo.expect("ended", 2000);
 check("the host leaving ends it for everyone", !!ended && /Ana/.test(ended.reason || ""), ended?.reason);
 for (const c of [ana, ben, cleo, dev2]) c.socket.close();
 
+console.log("a free-for-all room");
+{
+  const host = client("host");
+  await host.ready;
+  host.send({ type: "create", format: "royale", className: "classic", name: "Ana" });
+  const joined = await host.expect("joined");
+  check("the host gets a six-seat room", joined?.format === "royale");
+  const lobby = await host.expect("lobby");
+  check("…with a lobby of six seats, and three needed", lobby?.seats.length === 6 && lobby.min === 3,
+    JSON.stringify({ seats: lobby?.seats.length, min: lobby?.min }));
+  check("…which is not ready with one player", lobby?.ready === false);
+  host.send({ type: "start" });
+  await wait(250);
+  check("it will not start with one", !host.inbox.some((m) => m.type === "start"));
+
+  const guest = client("guest");
+  await guest.ready;
+  guest.send({ type: "join", code: joined.code, className: "sniper", name: "Ben" });
+  await guest.expect("joined");
+  host.send({ type: "addBot", to: 4, level: "hard" }); // a gap on purpose: seat 4, not 2
+  const three = await waitLobby(host, (l) => l.seats.filter(Boolean).length === 3);
+  check("three in the room — bots included — and it is ready", three?.ready === true);
+
+  host.send({ type: "start" });
+  check("the host starts it", !!(await host.expect("start")));
+  const st = await waitFor(guest, (s) => s.players.length === 3 && s.phase === "live", 8000);
+  check("three players on the big board", !!st && st.cols === 25 && st.rows === 25,
+    st ? st.players.length + " on " + st.cols + "x" + st.rows : "no state");
+  check("…everyone their own side, one life, points to play for",
+    st && st.ffa === true && st.sides === 3 && st.maxLives === 1 && st.target === 6);
+  check("…and the seats closed their gaps, so a seat is a player",
+    st && st.players.map((p) => p.name).join() === "Ana,Ben," + (three.seats[4] && three.seats[4].name),
+    st && st.players.map((p) => p.name).join());
+  const moved = await waitFor(guest, (s) => s.bombs.length > 0 || s.players[2].x !== st.players[2].x, 6000);
+  check("the bot plays in it", !!moved);
+
+  host.send({ type: "leave" });
+  host.socket.close();
+  guest.socket.close();
+}
+
+console.log("aiming over the wire");
+{
+  const host = client("host");
+  await host.ready;
+  host.send({ type: "create", className: "classic", name: "Thrower" });
+  const joined = await host.expect("joined");
+  host.send({ type: "addBot", level: "easy" });
+  await host.expect("start");
+  const live = await waitFor(host, (s) => s.phase === "live", 6000);
+  const me = live.players[0];
+  host.send({ type: "bomb", aim: { x: me.x, y: me.y + 3 } });
+  const thrown = await waitFor(host, (s) => s.bombs.length > 0, 2000);
+  const bomb = thrown && thrown.bombs.find((b) => b.owner === 0);
+  check("a bomb aimed three squares away lands there",
+    bomb && bomb.x === me.x && bomb.y === me.y + 3, JSON.stringify(bomb));
+  host.send({ type: "leave" });
+  host.socket.close();
+}
+
 console.log("leaving a lobby");
 {
   const host = client("host");

@@ -23,6 +23,11 @@ import {
   DECOY_MS,
   DECOY_COOLDOWN_MS,
   ROUND_END_KILLCAM_MS,
+  RING_GRACE_MS,
+  RING_STEP_MS,
+  ROYALE_SPAWNS,
+  ROYALE_POINTS_PER_PLAYER,
+  TILE_FIRE,
   MODES,
   FATALITY_STREAK,
   FATALITY_RANGE,
@@ -941,7 +946,7 @@ check("everyone gets their own colour and a default name",
   let clear = true;
   let mirrored = true;
   for (let seed = 1; seed <= 200; seed += 1) {
-    const tiles = generateLayout(seed, TEAM_SPAWNS);
+    const tiles = generateLayout(seed, { format: "teams" });
     for (let i = 0; i < tiles.length; i += 1) {
       const x = i % COLS, y = Math.floor(i / COLS);
       if (TEAM_SPAWNS.some((s) => Math.abs(s.x - x) + Math.abs(s.y - y) <= SPAWN_CLEAR_RADIUS) && tiles[i] !== TILE_FLOOR) clear = false;
@@ -953,7 +958,7 @@ check("everyone gets their own colour and a default name",
   check("…and stay point-symmetric", mirrored);
   const real = dealGame({ format: "teams", seed: 5 });
   check("a 2v2 match deals its board around the team spawns",
-    JSON.stringify(real.layout) === JSON.stringify(generateLayout(5, TEAM_SPAWNS)));
+    JSON.stringify(real.layout) === JSON.stringify(generateLayout(5, { format: "teams" })));
 }
 
 // Knocks one player out with enemy fire (or their own, with owner = index).
@@ -1108,6 +1113,179 @@ boomAt(g, 6, 8, 0, 1);
 run(g, 32);
 check("a fatality on offer keeps the freeze short, kill cam or not",
   fatalityReady(g, 0) !== null && g.phaseLeft <= ROUND_END_MS);
+
+// --- throwing ---------------------------------------------------------------------
+
+console.log("throwing bombs");
+g = createGame();
+g.players[0].x = 5; g.players[0].y = 5;
+requestBomb(g, 0, { x: 8, y: 5 });
+step(g, 16);
+check("a bomb lands on the square you aim at", g.bombs[0]?.x === 8 && g.bombs[0]?.y === 5,
+  JSON.stringify(g.bombs[0]));
+check("…and the throw is announced", g.events.some((e) => e.type === "throw"));
+
+g = createGame();
+g.players[0].x = 5; g.players[0].y = 5;
+requestBomb(g, 0, { x: 11, y: 5 }); // further than classic can throw
+step(g, 16);
+check("out of range it falls short, at the end of your reach",
+  g.bombs[0]?.x === 5 + CLASSES.classic.throwRange, "x=" + g.bombs[0]?.x);
+
+g = createGame();
+g.players[0].x = 5; g.players[0].y = 5;
+put(g, 6, 5, TILE_WALL);
+put(g, 7, 5, 9);
+requestBomb(g, 0, { x: 8, y: 5 });
+step(g, 16);
+check("it arcs over walls and crates", g.bombs[0]?.x === 8 && tileAt(g, 6, 5) === TILE_WALL &&
+  tileAt(g, 7, 5) === 9);
+
+g = createGame();
+g.players[0].x = 5; g.players[0].y = 5;
+put(g, 8, 5, TILE_WALL);
+requestBomb(g, 0, { x: 8, y: 5 });
+step(g, 16);
+check("aiming at a wall leaves it on the last free square on the way", g.bombs[0]?.x === 7, "x=" + g.bombs[0]?.x);
+
+g = createGame();
+g.players[0].x = 5; g.players[0].y = 5;
+g.players[1].x = 7; g.players[1].y = 5;
+requestBomb(g, 0, { x: 7, y: 5 });
+step(g, 16);
+check("a bomb never lands on someone's head", g.bombs[0]?.x === 6, "x=" + g.bombs[0]?.x);
+
+g = createGame();
+g.players[0].x = 5; g.players[0].y = 5;
+requestBomb(g, 0);
+step(g, 16);
+check("with no aim it drops at your feet, as it always did", g.bombs[0]?.x === 5 && g.bombs[0]?.y === 5);
+
+g = createGame({ classes: ["line", "classic"] });
+g.players[0].x = 5; g.players[0].y = 5;
+requestBomb(g, 0, { x: 1, y: 5 });
+step(g, 16);
+check("a line bomb is not thrown — the aim turns its lane",
+  g.bombs[0]?.x === 5 && g.bombs[0]?.y === 5 && g.bombs[0]?.dir === "left", JSON.stringify(g.bombs[0]));
+
+g = createGame({ classes: ["sniper", "classic"] });
+g.players[0].x = 5; g.players[0].y = 5;
+requestBomb(g, 0, { x: 5, y: 11 });
+step(g, 16);
+check("a sniper puts it exactly where you click", g.bombs[0]?.x === 5 && g.bombs[0]?.y === 11);
+g = createGame({ classes: ["sniper", "classic"] });
+g.players[0].x = 5; g.players[0].y = 5;
+requestBomb(g, 0, { x: 5, y: 7 }); // 2 squares: inside its minimum range
+step(g, 16);
+check("…never closer than its minimum range",
+  g.bombs.length === 0 && g.events.some((e) => e.type === "bombRefused"));
+g = createGame({ classes: ["sniper", "classic"] });
+g.players[0].x = 5; g.players[0].y = 5;
+requestBomb(g, 0, { x: 5, y: 15 }); // 10 squares: past its maximum
+step(g, 16);
+check("…nor further than its maximum", g.bombs.length === 0);
+
+g = createGame({ classes: ["decoy", "classic"] });
+g.players[0].x = 5; g.players[0].y = 5;
+requestAbility(g, 0, { x: 7, y: 5 });
+step(g, 16);
+check("a decoy can be put down at arm's length", g.decoys[0]?.x === 7 && g.decoys[0]?.y === 5);
+
+// --- free-for-all ------------------------------------------------------------------
+
+console.log("free-for-all — the board and the sides");
+let r = dealGame({ format: "royale", countdownMs: 0 });
+check("six players on a 25x25 board", r.players.length === 6 && r.cols === 25 && r.rows === 25,
+  r.players.length + " on " + r.cols + "x" + r.rows);
+check("everyone is their own side", r.sides === 6 && r.players.every((p, i) => p.team === i));
+check("they start spread around it",
+  r.players.every((p, i) => p.x === ROYALE_SPAWNS[i].x && p.y === ROYALE_SPAWNS[i].y));
+check("one life each, and a points target to play for",
+  r.maxLives === 1 && r.target === ROYALE_POINTS_PER_PLAYER * 5, "target=" + r.target);
+r.players[0].streak = 9;
+check("no fatality in a free-for-all", r.fatality === false && fatalityReady(r, 0) === null);
+{
+  const three = dealGame({ format: "royale", players: [{}, {}, {}], countdownMs: 0 });
+  check("it can be played by three", three.players.length === 3 && three.spawns.length === 3 &&
+    three.target === ROYALE_POINTS_PER_PLAYER * 2);
+  let clear = true;
+  for (let seed = 1; seed <= 60; seed += 1) {
+    const tiles = generateLayout(seed, { format: "royale" });
+    for (let i = 0; i < tiles.length; i += 1) {
+      const x = i % 25, y = Math.floor(i / 25);
+      if (ROYALE_SPAWNS.some((sp) => Math.abs(sp.x - x) + Math.abs(sp.y - y) <= SPAWN_CLEAR_RADIUS) &&
+        tiles[i] !== TILE_FLOOR) clear = false;
+    }
+  }
+  check("its boards keep all six spawns clear", clear);
+  const turned = generateLayout(3, { format: "royale" });
+  const kind = (t) => (t === TILE_WALL ? "wall" : t > 0 ? "crate" : "floor");
+  const quarterTurn = turned.every((t, i) => {
+    const x = i % 25, y = Math.floor(i / 25);
+    return kind(t) === kind(turned[x * 25 + (24 - y)]);
+  });
+  check("…and look the same after a quarter turn", quarterTurn);
+}
+
+console.log("free-for-all — scoring a round");
+r = dealGame({ format: "royale", obstacles: false, countdownMs: 0 });
+for (const index of [3, 1, 4, 2, 5]) knock(r, index, (index + 1) % 6);
+check("the round ends when one player is left", r.phase === "roundEnd" && r.history[0] === 0);
+check("the first one out scores nothing, the last one standing the most",
+  r.players[3].score === 0 && r.players[1].score === 1 && r.players[5].score === 4 && r.players[0].score === 5,
+  r.players.map((p) => p.score).join());
+check("nobody loses a life — a round costs you your place, not a life",
+  r.players.every((p) => p.lives === 1));
+run(r, ROUND_END_KILLCAM_MS + 100);
+check("everyone is back for the next round", r.round === 2 && r.players.every((p) => p.alive));
+
+r = dealGame({ format: "royale", obstacles: false, countdownMs: 0 });
+r.players[0].score = r.target - 5;
+for (const index of [1, 2, 3, 4, 5]) knock(r, index, 0);
+check("reaching the points target wins the match", r.status === "over" && r.winner === 0,
+  "status=" + r.status + " score=" + r.players[0].score);
+
+console.log("free-for-all — the fire wall");
+r = dealGame({ format: "royale", obstacles: false, countdownMs: 0 });
+check("it waits before it starts", r.ring.inset === 0 && tileAt(r, 0, 0) === TILE_FLOOR);
+run(r, RING_GRACE_MS + 50);
+check("then the outermost ring burns", r.ring.inset === 1 && tileAt(r, 0, 0) === TILE_FIRE &&
+  tileAt(r, 24, 24) === TILE_FIRE);
+check("…and only that ring", tileAt(r, 1, 1) === TILE_FLOOR);
+run(r, RING_STEP_MS + 50);
+check("…another ring follows", r.ring.inset === 2 && tileAt(r, 1, 1) === TILE_FIRE);
+
+r = dealGame({ format: "royale", obstacles: false, countdownMs: 0 });
+r.players[0].x = 0; r.players[0].y = 0;
+r.players[0].selfShields = 1;
+r.players[0].shields = 1;
+run(r, RING_GRACE_MS + 100);
+check("standing in it kills you, shield or not",
+  !r.players[0].alive && r.kills.some((k) => k.victim === 0 && k.by === null));
+
+r = dealGame({ format: "royale", obstacles: false, countdownMs: 0 });
+r.players[1].x = 3; r.players[1].y = 3;
+run(r, RING_GRACE_MS + 50);
+check("walking into it is allowed — it is the standing there that kills", (() => {
+  const me = r.players[1];
+  me.x = 1; me.y = 3;
+  tap(r, 1, "left"); // one step further, into the fire
+  return me.x === 0;
+})());
+check("…and then it takes you", !r.players[1].alive);
+
+r = dealGame({ format: "royale", obstacles: false, countdownMs: 0 });
+r.bombs.push({ x: 0, y: 0, owner: 0, fuse: 999999, fuseMax: 999999, radius: 1, shape: "cross", dir: "down" });
+run(r, RING_GRACE_MS + 100);
+check("a bomb the fire reaches goes off with it", r.bombs.length === 0 && r.blasts.length > 0);
+
+r = dealGame({ format: "royale", obstacles: false, countdownMs: 0 });
+run(r, RING_GRACE_MS + RING_STEP_MS * 3);
+const burnt = r.ring.inset;
+for (const index of [1, 2, 3, 4, 5]) knock(r, index, 0);
+run(r, ROUND_END_KILLCAM_MS + 100);
+check("a new round puts the board — and the fire wall — back",
+  burnt >= 3 && r.ring.inset === 0 && tileAt(r, 0, 0) === TILE_FLOOR && r.round === 2);
 
 console.log("");
 console.log(failures === 0 ? "ALL CHECKS PASSED" : failures + " CHECK(S) FAILED");
